@@ -19,6 +19,7 @@ Commands:
   update              Update, upgrade, and clean packages
   install <target>    Install a .deb file or apt package
   uninstall <pkg>     Remove a package and clean up
+  deps                Check and install all script dependencies
   help                Show this help
 
 Examples:
@@ -26,6 +27,7 @@ Examples:
   sys install ./package.deb
   sys install curl
   sys uninstall firefox
+  sys deps
 EOF
 }
 
@@ -86,6 +88,43 @@ sys_uninstall() {
   info "$pkg removed."
 }
 
+sys_deps() {
+  declare -A deps=(
+    [curl]="curl"
+    [ssh]="openssh-client"
+    [ssh-keygen]="openssh-client"
+    [crontab]="cron"
+    [wg]="wireguard-tools"
+    [wg-quick]="wireguard-tools"
+  )
+
+  local installed=()
+  local to_install=()
+
+  header "Checking dependencies..."
+
+  for cmd in "${!deps[@]}"; do
+    local pkg="${deps[$cmd]}"
+    if command -v "$cmd" &>/dev/null; then
+      info "$cmd already installed ($pkg)"
+    else
+      if [[ ! " ${to_install[*]} " =~ " ${pkg} " ]]; then
+        to_install+=("$pkg")
+      fi
+    fi
+  done
+
+  if [[ ${#to_install[@]} -eq 0 ]]; then
+    info "All dependencies are already installed."
+    return
+  fi
+
+  header "Installing missing packages: ${to_install[*]}"
+  sudo apt install -y "${to_install[@]}"
+
+  info "All dependencies installed."
+}
+
 main() {
   local cmd="${1:-help}"
   shift || true
@@ -94,6 +133,7 @@ main() {
     update)         sys_update ;;
     install)        sys_install "$@" ;;
     uninstall)      sys_uninstall "$@" ;;
+    deps)           sys_deps ;;
     help|--help|-h) show_help ;;
     *)              error "Unknown command: $cmd"; show_help; exit 1 ;;
   esac
