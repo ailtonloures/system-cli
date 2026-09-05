@@ -1,0 +1,518 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly GREEN='\033[0;32m'
+readonly RED='\033[0;31m'
+readonly CYAN='\033[0;36m'
+readonly YELLOW='\033[0;33m'
+readonly BOLD='\033[1m'
+readonly RESET='\033[0m'
+
+readonly HTTP_DIR="${HOME}/.config/http"
+readonly HTTP_CLIENTS_DIR="${HTTP_DIR}/clients"
+readonly HTTP_SAVES_DIR="${HTTP_DIR}/saves"
+readonly HTTP_HISTORY="${HTTP_DIR}/history.log"
+
+info()   { echo -e "${GREEN}✓${RESET} $*"; }
+error()  { echo -e "${RED}✗${RESET} $*" >&2; }
+header() { echo -e "${BOLD}${CYAN}$*${RESET}"; }
+
+show_help() {
+  cat <<EOF
+Usage: http <command> [args]
+
+Commands:
+  get <url> [opts]                      Send a GET request
+  post <url> [opts]                     Send a POST request
+  put <url> [opts]                      Send a PUT request
+  delete <url> [opts]                   Send a DELETE request
+  client add <name>                     Add a named client (interactive)
+  client remove <name>                  Remove a client
+  client list                           List all clients
+  client show <name>                    Show client details
+  save <name> <method> <url> [opts]     Save a request for replay
+  run <name>                            Replay a saved request
+  saves                                 List saved requests
+  unsave <name>                         Remove a saved request
+  history                               Show recent requests (last 20)
+  history clear                         Clear request history
+  help                                  Show this help
+
+Options:
+  -c <client>     Use a named client (base URL + defaults)
+  -H <header>     Add a header (repeatable)
+  -d <data>       Request body (string or @file)
+  -v              Verbose (show request details + response headers)
+
+Examples:
+  http get https://api.example.com/users
+  http post https://api.example.com/users -d '{"name":"John"}'
+  http get /users -c myapi
+  http client add myapi
+  http save list-users get /users -c myapi
+  http run list-users
+EOF
+}
+
+http_ensure_dirs() {
+  mkdir -p "$HTTP_CLIENTS_DIR" "$HTTP_SAVES_DIR"
+  [[ -f "$HTTP_HISTORY" ]] || touch "$HTTP_HISTORY"
+}
+
+http_check_deps() {
+  if ! command -v curl &>/dev/null; then
+    error "curl is required but not installed."
+    exit 1
+  fi
+}
+
+http_load_client() {
+  local name="$1"
+  local conf="${HTTP_CLIENTS_DIR}/${name}.conf"
+
+  if [[ ! -f "$conf" ]]; then
+    error "Client '$name' not found."
+    exit 1
+  fi
+
+  _client_base_url=""
+  _client_auth_token=""
+  _client_headers=()
+
+  while IFS= read -r line; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    case "$line" in
+      base_url=*)    _client_base_url="${line#base_url=}" ;;
+      auth_token=*)  _client_auth_token="${line#auth_token=}" ;;
+      header=*)      _client_headers+=("${line#header=}") ;;
+    esac
+  done < "$conf"
+}
+
+http_log_history() {
+  local method="$1" url="$2" status="$3"
+  local timestamp
+  timestamp=$(date +%Y-%m-%dT%H:%M:%S)
+  echo "${timestamp}|${method}|${url}|${status}" >> "$HTTP_HISTORY"
+}
+
+http_parse_opts() {
+  _opt_client=""
+  _opt_verbose=0
+  _opt_data=""
+  _opt_headers=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -c) _opt_client="${2:-}"; shift 2 ;;
+      -H) _opt_headers+=("${2:-}"); shift 2 ;;
+      -d) _opt_data="${2:-}"; shift 2 ;;
+      -v) _opt_verbose=1; shift ;;
+      *)  error "Unknown option: $1"; exit 1 ;;
+    esac
+  done
+}
+
+http_request() {
+  local method="${1:-}"
+  local url_or_path="${2:-}"
+  shift 2 || true
+
+  if [[ -z "$url_or_path" ]]; then
+    error "Missing URL. Usage: http ${method,,} <url> [opts]"
+    exit 1
+  fi
+
+  http_parse_opts "$@"
+
+  local -a curl_args=(-s -w '\n%{http_code}')
+  local resolved_url="$url_or_path"
+  local has_content_type=0
+
+  curl_args+=(-X "$method")
+
+  if [[ -n "$_opt_client" ]]; then
+    http_load_client "$_opt_client"
+
+    local base="${_client_base_url%/}"
+    local path="$url_or_path"
+    [[ "$path" != /* ]] && path="/${path}"
+    resolved_url="${base}${path}"
+
+    if [[ -n "$_client_auth_token" ]]; then
+      curl_args+=(-H "Authorization: ${_client_auth_token}")
+    fi
+
+    for h in "${_client_headers[@]+"${_client_headers[@]}"}"; do
+      curl_args+=(-H "$h")
+      [[ "${h,,}" == content-type:* ]] && has_content_type=1
+    done
+  else
+    if [[ ! "$url_or_path" =~ ^https?:// ]]; then
+      error "URL must start with http:// or https:// (or use -c <client>)"
+      exit 1
+    fi
+  fi
+
+  for h in "${_opt_headers[@]+"${_opt_headers[@]}"}"; do
+    curl_args+=(-H "$h")
+    [[ "${h,,}" == content-type:* ]] && has_content_type=1
+  done
+
+  if [[ -n "$_opt_data" ]]; then
+    if [[ "$_opt_data" == @* ]]; then
+      local file="${_opt_data#@}"
+      if [[ ! -f "$file" ]]; then
+        error "File not found: $file"
+        exit 1
+      fi
+    fi
+    curl_args+=(-d "$_opt_data")
+    if [[ "$has_content_type" -eq 0 ]]; then
+      curl_args+=(-H "Content-Type: application/json")
+    fi
+  fi
+
+  if [[ "$_opt_verbose" -eq 1 ]]; then
+    curl_args=("${curl_args[@]/-s/-v}")
+    curl_args+=(--include)
+    echo -e "${BOLD}${method} ${resolved_url}${RESET}" >&2
+  fi
+
+  curl_args+=("$resolved_url")
+
+  local output exit_code=0
+  output=$(curl "${curl_args[@]}" 2>&1) || exit_code=$?
+
+  if [[ "$exit_code" -ne 0 && -z "$output" ]]; then
+    error "Request failed (curl exit $exit_code)"
+    http_log_history "$method" "$resolved_url" "ERR"
+    return 1
+  fi
+
+  local status_code body
+  status_code=$(echo "$output" | tail -1)
+  body=$(echo "$output" | sed '$d')
+
+  if [[ -n "$body" ]]; then
+    echo "$body"
+  fi
+
+  if [[ "$status_code" =~ ^[0-9]+$ ]]; then
+    local color="$GREEN"
+    [[ "$status_code" =~ ^3 ]] && color="$YELLOW"
+    [[ "$status_code" =~ ^[45] ]] && color="$RED"
+    echo -e "${color}${status_code}${RESET}" >&2
+    http_log_history "$method" "$resolved_url" "$status_code"
+  else
+    http_log_history "$method" "$resolved_url" "ERR"
+  fi
+}
+
+# --- Client management ---
+
+http_client_dispatch() {
+  local subcmd="${1:-list}"
+  shift || true
+  case "$subcmd" in
+    add)    http_client_add "$@" ;;
+    remove) http_client_remove "$@" ;;
+    list|ls) http_client_list ;;
+    show)   http_client_show "$@" ;;
+    *)      error "Unknown client command: $subcmd"; exit 1 ;;
+  esac
+}
+
+http_client_add() {
+  local name="${1:-}"
+  if [[ -z "$name" ]]; then
+    error "Missing name. Usage: http client add <name>"
+    exit 1
+  fi
+
+  local conf="${HTTP_CLIENTS_DIR}/${name}.conf"
+
+  if [[ -f "$conf" ]]; then
+    read -rp "Client '$name' already exists. Overwrite? [y/N] " confirm
+    if [[ "$confirm" != [yY] ]]; then
+      echo "Cancelled."
+      return
+    fi
+  fi
+
+  header "Adding client: $name"
+
+  local base_url auth_token
+  read -rp "  Base URL: " base_url
+  if [[ -z "$base_url" ]]; then
+    error "Base URL cannot be empty."
+    exit 1
+  fi
+
+  read -rp "  Auth token (leave empty to skip): " auth_token
+
+  local -a headers=()
+  echo "  Headers (one per line, empty to finish):"
+  while true; do
+    local h
+    read -rp "    > " h
+    [[ -z "$h" ]] && break
+    headers+=("$h")
+  done
+
+  {
+    echo "base_url=${base_url}"
+    [[ -n "$auth_token" ]] && echo "auth_token=${auth_token}"
+    for h in "${headers[@]+"${headers[@]}"}"; do
+      echo "header=${h}"
+    done
+  } > "$conf"
+
+  info "Client '$name' added."
+}
+
+http_client_remove() {
+  local name="${1:-}"
+  if [[ -z "$name" ]]; then
+    error "Missing name. Usage: http client remove <name>"
+    exit 1
+  fi
+
+  local conf="${HTTP_CLIENTS_DIR}/${name}.conf"
+  if [[ ! -f "$conf" ]]; then
+    error "Client '$name' not found."
+    exit 1
+  fi
+
+  read -rp "Remove client '$name'? [y/N] " confirm
+  if [[ "$confirm" != [yY] ]]; then
+    echo "Cancelled."
+    return
+  fi
+
+  rm -f "$conf"
+  info "Client '$name' removed."
+}
+
+http_client_list() {
+  local found=0
+
+  for conf in "$HTTP_CLIENTS_DIR"/*.conf; do
+    [[ -f "$conf" ]] || continue
+    local name
+    name=$(basename "$conf" .conf)
+    local base_url=""
+    while IFS= read -r line; do
+      [[ "$line" == base_url=* ]] && base_url="${line#base_url=}" && break
+    done < "$conf"
+    echo -e "  ${GREEN}${name}${RESET} → ${base_url}"
+    found=1
+  done
+
+  if [[ "$found" -eq 0 ]]; then
+    echo "No clients configured."
+  fi
+}
+
+http_client_show() {
+  local name="${1:-}"
+  if [[ -z "$name" ]]; then
+    error "Missing name. Usage: http client show <name>"
+    exit 1
+  fi
+
+  local conf="${HTTP_CLIENTS_DIR}/${name}.conf"
+  if [[ ! -f "$conf" ]]; then
+    error "Client '$name' not found."
+    exit 1
+  fi
+
+  header "Client: $name"
+
+  while IFS= read -r line; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    case "$line" in
+      base_url=*)   echo -e "  Base URL:  ${line#base_url=}" ;;
+      auth_token=*) echo -e "  Auth:      ${line#auth_token=}" ;;
+      header=*)     echo -e "  Header:    ${line#header=}" ;;
+    esac
+  done < "$conf"
+}
+
+# --- Saved requests ---
+
+http_save() {
+  local name="${1:-}"
+  local method="${2:-}"
+  local url="${3:-}"
+
+  if [[ -z "$name" || -z "$method" || -z "$url" ]]; then
+    error "Usage: http save <name> <method> <url> [opts]"
+    exit 1
+  fi
+
+  shift 3
+  http_parse_opts "$@"
+
+  method="${method^^}"
+
+  local conf="${HTTP_SAVES_DIR}/${name}.conf"
+
+  if [[ -f "$conf" ]]; then
+    read -rp "Request '$name' already exists. Overwrite? [y/N] " confirm
+    if [[ "$confirm" != [yY] ]]; then
+      echo "Cancelled."
+      return
+    fi
+  fi
+
+  {
+    echo "method=${method}"
+    echo "path=${url}"
+    [[ -n "$_opt_client" ]] && echo "client=${_opt_client}"
+    for h in "${_opt_headers[@]+"${_opt_headers[@]}"}"; do
+      echo "header=${h}"
+    done
+    [[ -n "$_opt_data" ]] && echo "data=${_opt_data}"
+  } > "$conf"
+
+  info "Request '$name' saved."
+}
+
+http_run() {
+  local name="${1:-}"
+  if [[ -z "$name" ]]; then
+    error "Missing name. Usage: http run <name>"
+    exit 1
+  fi
+
+  local conf="${HTTP_SAVES_DIR}/${name}.conf"
+  if [[ ! -f "$conf" ]]; then
+    error "Saved request '$name' not found."
+    exit 1
+  fi
+
+  local method="" path="" client="" data=""
+  local -a headers=()
+
+  while IFS= read -r line; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    case "$line" in
+      method=*)  method="${line#method=}" ;;
+      path=*)    path="${line#path=}" ;;
+      client=*)  client="${line#client=}" ;;
+      header=*)  headers+=("${line#header=}") ;;
+      data=*)    data="${line#data=}" ;;
+    esac
+  done < "$conf"
+
+  local -a args=("$method" "$path")
+  [[ -n "$client" ]] && args+=(-c "$client")
+  for h in "${headers[@]+"${headers[@]}"}"; do
+    args+=(-H "$h")
+  done
+  [[ -n "$data" ]] && args+=(-d "$data")
+
+  http_request "${args[@]}"
+}
+
+http_saves_list() {
+  local found=0
+
+  for conf in "$HTTP_SAVES_DIR"/*.conf; do
+    [[ -f "$conf" ]] || continue
+    local name method="" path=""
+    name=$(basename "$conf" .conf)
+    while IFS= read -r line; do
+      case "$line" in
+        method=*) method="${line#method=}" ;;
+        path=*)   path="${line#path=}" ;;
+      esac
+    done < "$conf"
+    echo -e "  ${GREEN}${name}${RESET} → ${method} ${path}"
+    found=1
+  done
+
+  if [[ "$found" -eq 0 ]]; then
+    echo "No saved requests."
+  fi
+}
+
+http_unsave() {
+  local name="${1:-}"
+  if [[ -z "$name" ]]; then
+    error "Missing name. Usage: http unsave <name>"
+    exit 1
+  fi
+
+  local conf="${HTTP_SAVES_DIR}/${name}.conf"
+  if [[ ! -f "$conf" ]]; then
+    error "Saved request '$name' not found."
+    exit 1
+  fi
+
+  read -rp "Remove saved request '$name'? [y/N] " confirm
+  if [[ "$confirm" != [yY] ]]; then
+    echo "Cancelled."
+    return
+  fi
+
+  rm -f "$conf"
+  info "Request '$name' removed."
+}
+
+# --- History ---
+
+http_history() {
+  local subcmd="${1:-show}"
+
+  if [[ "$subcmd" == "clear" ]]; then
+    read -rp "Clear request history? [y/N] " confirm
+    if [[ "$confirm" != [yY] ]]; then
+      echo "Cancelled."
+      return
+    fi
+    : > "$HTTP_HISTORY"
+    info "History cleared."
+    return
+  fi
+
+  if [[ ! -s "$HTTP_HISTORY" ]]; then
+    echo "No requests in history."
+    return
+  fi
+
+  tail -20 "$HTTP_HISTORY" | while IFS='|' read -r timestamp method url status; do
+    local color="$GREEN"
+    [[ "$status" =~ ^3 ]] && color="$YELLOW"
+    [[ "$status" =~ ^[45] || "$status" == "ERR" ]] && color="$RED"
+    echo -e "  ${timestamp}  ${BOLD}${method}${RESET}  ${url}  ${color}${status}${RESET}"
+  done
+}
+
+# --- Main ---
+
+main() {
+  http_check_deps
+  http_ensure_dirs
+
+  local cmd="${1:-help}"
+  shift || true
+
+  case "$cmd" in
+    get|GET)         http_request GET "$@" ;;
+    post|POST)       http_request POST "$@" ;;
+    put|PUT)         http_request PUT "$@" ;;
+    delete|DELETE)   http_request DELETE "$@" ;;
+    client)          http_client_dispatch "$@" ;;
+    save)            http_save "$@" ;;
+    run)             http_run "$@" ;;
+    saves)           http_saves_list ;;
+    unsave)          http_unsave "$@" ;;
+    history)         http_history "$@" ;;
+    help|--help|-h)  show_help ;;
+    *)               error "Unknown command: $cmd"; show_help; exit 1 ;;
+  esac
+}
+
+main "$@"

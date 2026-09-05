@@ -11,6 +11,7 @@ A collection of shell utilities for everyday Linux system administration.
 | `run`   | Script runner with interactive picker |
 | `conn`  | SSH connection manager (connect, add, remove, keygen) |
 | `cron`  | Cron job manager (add, remove, update, list) |
+| `http`  | HTTP client with curl (requests, clients, saved requests) |
 
 ## Requirements
 
@@ -82,6 +83,20 @@ cron add cleanup                                              # add interactivel
 cron list                                                     # list all managed cron jobs
 cron update backup                                            # update schedule or command
 cron remove backup                                            # remove a cron job
+```
+
+### http
+
+```bash
+http get https://api.example.com/users           # simple GET request
+http post https://api.example.com/users \
+  -d '{"name":"John"}'                            # POST with JSON body
+http get /users -c myapi                          # use a named client
+http client add myapi                             # add a client (interactive)
+http client list                                  # list all clients
+http save list-users get /users -c myapi          # save a request
+http run list-users                               # replay a saved request
+http history                                      # show recent requests
 ```
 
 ## License
