@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly GREEN='\033[0;32m'
+readonly RED='\033[0;31m'
+readonly CYAN='\033[0;36m'
+readonly BOLD='\033[1m'
+readonly RESET='\033[0m'
+
+readonly LABEL_PREFIX="# cron:"
+
+info()   { echo -e "${GREEN}✓${RESET} $*"; }
+error()  { echo -e "${RED}✗${RESET} $*" >&2; }
+header() { echo -e "${BOLD}${CYAN}$*${RESET}"; }
+
+show_help() {
+  cat <<EOF
+Usage: cron <command> [args]
+
+Commands:
+  add <name> [schedule] [command]   Add a new cron job (interactive if args omitted)
+  remove <name>                     Remove a cron job by name
+  update <name>                     Update an existing cron job
+  list                              List all managed cron jobs
+  help                              Show this help
+
+Examples:
+  cron add backup '0 2 * * *' '/home/user/scripts/backup.sh'
+  cron add cleanup
+  cron list
+  cron update backup
+  cron remove backup
+EOF
+}
+
+cron_get_crontab() {
+  crontab -l 2>/dev/null || true
+}
+
+cron_entry_exists() {
+  local name="$1"
+  cron_get_crontab | grep -qF "${LABEL_PREFIX}${name}"
+}
+
+cron_add() {
+  local name="${1:-}"
+  if [[ -z "$name" ]]; then
+    error "Missing name. Usage: cron add <name> [schedule] [command]"
+    exit 1
+  fi
+
+  if cron_entry_exists "$name"; then
+    error "Cron job '$name' already exists. Use 'cron update $name' to modify it."
+    exit 1
+  fi
+
+  local schedule="${2:-}"
+  local command="${3:-}"
+
+  if [[ -z "$schedule" ]]; then
+    header "Adding cron job: $name"
+    read -rp "  Schedule (e.g. '*/5 * * * *'): " schedule
+    if [[ -z "$schedule" ]]; then
+      error "Schedule cannot be empty."
+      exit 1
+    fi
+  fi
+
+  if [[ -z "$command" ]]; then
+    read -rp "  Command: " command
+    if [[ -z "$command" ]]; then
+      error "Command cannot be empty."
+      exit 1
+    fi
+  fi
+
+  (cron_get_crontab; echo "${LABEL_PREFIX}${name}"; echo "${schedule} ${command}") | crontab -
+
+  info "Cron job '$name' added: ${schedule} ${command}"
+}
+
+cron_list() {
+  local crontab_content
+  crontab_content=$(cron_get_crontab)
+
+  if [[ -z "$crontab_content" ]]; then
+    echo "No cron jobs configured."
+    return
+  fi
+
+  local found=0
+  local name entry
+
+  while IFS= read -r line; do
+    if [[ "$line" == "${LABEL_PREFIX}"* ]]; then
+      name="${line#"$LABEL_PREFIX"}"
+      if IFS= read -r entry; then
+        local schedule command_part
+        schedule=$(echo "$entry" | awk '{print $1, $2, $3, $4, $5}')
+        command_part=$(echo "$entry" | awk '{for(i=6;i<=NF;i++) printf "%s ", $i; print ""}' | sed 's/ $//')
+        echo -e "  ${GREEN}${name}${RESET} → ${schedule}  ${command_part}"
+        found=1
+      fi
+    fi
+  done <<< "$crontab_content"
+
+  if [[ "$found" -eq 0 ]]; then
+    echo "No managed cron jobs found."
+  fi
+}
+
+cron_remove() {
+  local name="${1:-}"
+  if [[ -z "$name" ]]; then
+    error "Missing name. Usage: cron remove <name>"
+    exit 1
+  fi
+
+  if ! cron_entry_exists "$name"; then
+    error "Cron job '$name' not found."
+    exit 1
+  fi
+
+  local entry
+  entry=$(cron_get_crontab | grep -A1 -F "${LABEL_PREFIX}${name}" | tail -1)
+  echo -e "  ${BOLD}${name}${RESET}: ${entry}"
+
+  read -rp "Remove cron job '$name'? [y/N] " confirm
+  if [[ "$confirm" != [yY] ]]; then
+    echo "Cancelled."
+    return
+  fi
+
+  cron_get_crontab | awk -v label="${LABEL_PREFIX}${name}" '
+    $0 == label { skip=1; next }
+    skip { skip=0; next }
+    { print }
+  ' | crontab -
+
+  info "Cron job '$name' removed."
+}
+
+cron_update() {
+  local name="${1:-}"
+  if [[ -z "$name" ]]; then
+    error "Missing name. Usage: cron update <name>"
+    exit 1
+  fi
+
+  if ! cron_entry_exists "$name"; then
+    error "Cron job '$name' not found."
+    exit 1
+  fi
+
+  local current_entry
+  current_entry=$(cron_get_crontab | grep -A1 -F "${LABEL_PREFIX}${name}" | tail -1)
+
+  local current_schedule current_command
+  current_schedule=$(echo "$current_entry" | awk '{print $1, $2, $3, $4, $5}')
+  current_command=$(echo "$current_entry" | awk '{for(i=6;i<=NF;i++) printf "%s ", $i; print ""}' | sed 's/ $//')
+
+  header "Updating cron job: $name"
+  echo -e "  Current schedule: ${current_schedule}"
+  echo -e "  Current command:  ${current_command}"
+  echo ""
+
+  local new_schedule new_command
+  read -rp "  New schedule (enter to keep): " new_schedule
+  new_schedule="${new_schedule:-$current_schedule}"
+
+  read -rp "  New command (enter to keep): " new_command
+  new_command="${new_command:-$current_command}"
+
+  if [[ "$new_schedule" == "$current_schedule" && "$new_command" == "$current_command" ]]; then
+    echo "No changes made."
+    return
+  fi
+
+  cron_get_crontab | awk -v label="${LABEL_PREFIX}${name}" -v new_entry="${new_schedule} ${new_command}" '
+    $0 == label { print; skip=1; next }
+    skip { print new_entry; skip=0; next }
+    { print }
+  ' | crontab -
+
+  info "Cron job '$name' updated: ${new_schedule} ${new_command}"
+}
+
+main() {
+  local cmd="${1:-help}"
+  shift || true
+
+  case "$cmd" in
+    add)            cron_add "$@" ;;
+    remove)         cron_remove "$@" ;;
+    update)         cron_update "$@" ;;
+    list|ls)        cron_list ;;
+    help|--help|-h) show_help ;;
+    *)              error "Unknown command: $cmd"; show_help; exit 1 ;;
+  esac
+}
+
+main "$@"

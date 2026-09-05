@@ -10,6 +10,7 @@ A collection of shell utilities for everyday Linux system administration.
 | `vpn`   | WireGuard VPN manager (connect, disconnect, switch) |
 | `run`   | Script runner with interactive picker |
 | `conn`  | SSH connection manager (connect, add, remove, keygen) |
+| `cron`  | Cron job manager (add, remove, update, list) |
 
 ## Requirements
 
@@ -71,6 +72,16 @@ conn add hermes         # add a new connection (interactive)
 conn remove hermes      # remove a connection
 conn list               # list all configured connections
 conn keygen deploy      # generate an SSH key pair (interactive type selection)
+```
+
+### cron
+
+```bash
+cron add backup '0 2 * * *' '/home/user/scripts/backup.sh'  # add with inline args
+cron add cleanup                                              # add interactively
+cron list                                                     # list all managed cron jobs
+cron update backup                                            # update schedule or command
+cron remove backup                                            # remove a cron job
 ```
 
 ## License
