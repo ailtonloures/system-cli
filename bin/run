@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly SCRIPTS_DIR="${SCRIPTS_DIR:-$HOME/Scripts}"
+
+readonly CYAN='\033[0;36m'
+readonly RED='\033[0;31m'
+readonly BOLD='\033[1m'
+readonly RESET='\033[0m'
+
+error() { echo -e "${RED}✗${RESET} $*" >&2; }
+header() { echo -e "${BOLD}${CYAN}$*${RESET}"; }
+
+show_help() {
+  cat <<EOF
+Usage: run [script-name]
+
+Run scripts from $SCRIPTS_DIR.
+
+  run              Pick a script interactively
+  run <name>       Run a script by name (.sh extension optional)
+  run help         Show this help
+
+Examples:
+  run backup
+  run backup.sh
+  run
+EOF
+}
+
+run_script() {
+  local name="$1"
+  local script="$SCRIPTS_DIR/$name"
+  [[ "$script" != *.sh ]] && script="${script}.sh"
+
+  if [[ ! -f "$script" ]]; then
+    error "Script not found: $script"
+    exit 1
+  fi
+
+  bash "$script"
+}
+
+run_picker() {
+  if [[ ! -d "$SCRIPTS_DIR" ]]; then
+    error "Directory not found: $SCRIPTS_DIR"
+    exit 1
+  fi
+
+  shopt -s nullglob
+  local scripts=("$SCRIPTS_DIR"/*.sh)
+  shopt -u nullglob
+
+  if [[ ${#scripts[@]} -eq 0 ]]; then
+    error "No .sh scripts found in $SCRIPTS_DIR"
+    exit 1
+  fi
+
+  header "Available scripts:"
+  for i in "${!scripts[@]}"; do
+    echo "  $((i + 1))) $(basename "${scripts[$i]}")"
+  done
+
+  echo ""
+  read -rp "Pick a script [1-${#scripts[@]}]: " choice
+
+  if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#scripts[@]} )); then
+    bash "${scripts[$((choice - 1))]}"
+  else
+    error "Invalid option."
+    exit 1
+  fi
+}
+
+main() {
+  local cmd="${1:-}"
+
+  case "$cmd" in
+    help|--help|-h) show_help ;;
+    "")             run_picker ;;
+    *)              run_script "$cmd" ;;
+  esac
+}
+
+main "$@"

@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly RESET='\033[0m'
+
+info()  { echo -e "${GREEN}✓${RESET} $*"; }
+error() { echo -e "${RED}✗${RESET} $*" >&2; }
+
+show_help() {
+  cat <<EOF
+Usage: vpn <command> [args]
+
+Commands:
+  switch <conf>    Disconnect all VPNs, connect to <conf>
+  up <conf>        Connect to a VPN
+  down <conf>      Disconnect from a VPN
+  show             Show active VPN interfaces
+  help             Show this help
+
+Examples:
+  vpn switch work
+  vpn up home
+  vpn down work
+  vpn show
+EOF
+}
+
+vpn_switch() {
+  local target="${1:-}"
+  if [[ -z "$target" ]]; then
+    error "Missing config name. Usage: vpn switch <conf>"
+    exit 1
+  fi
+
+  local active_vpns
+  active_vpns=$(sudo wg show interfaces 2>/dev/null || true)
+
+  if [[ -n "$active_vpns" ]]; then
+    for vpn in $active_vpns; do
+      echo -e "🔴 disconnecting $vpn..."
+      sudo wg-quick down "$vpn" || true
+    done
+  fi
+
+  echo -e "🟢 connecting $target..."
+  if sudo wg-quick up "$target"; then
+    info "connected on $target"
+  else
+    error "error connecting to $target"
+    exit 1
+  fi
+}
+
+vpn_up() {
+  local conf="${1:-}"
+  if [[ -z "$conf" ]]; then
+    error "Missing config name. Usage: vpn up <conf>"
+    exit 1
+  fi
+
+  echo -e "🟢 connecting $conf..."
+  if sudo wg-quick up "$conf"; then
+    info "connected on $conf"
+  else
+    error "error connecting to $conf"
+    exit 1
+  fi
+}
+
+vpn_down() {
+  local conf="${1:-}"
+  if [[ -z "$conf" ]]; then
+    error "Missing config name. Usage: vpn down <conf>"
+    exit 1
+  fi
+
+  echo -e "🔴 disconnecting $conf..."
+  if sudo wg-quick down "$conf"; then
+    info "disconnected from $conf"
+  else
+    error "error disconnecting from $conf"
+    exit 1
+  fi
+}
+
+vpn_show() {
+  local interfaces
+  interfaces=$(sudo wg show interfaces 2>/dev/null || true)
+
+  if [[ -z "$interfaces" ]]; then
+    echo "No active VPN interfaces."
+  else
+    echo "Active VPN interfaces:"
+    for iface in $interfaces; do
+      echo "  🟢 $iface"
+    done
+  fi
+}
+
+main() {
+  local cmd="${1:-help}"
+  shift || true
+
+  case "$cmd" in
+    switch)         vpn_switch "$@" ;;
+    up)             vpn_up "$@" ;;
+    down)           vpn_down "$@" ;;
+    show|status)    vpn_show ;;
+    help|--help|-h) show_help ;;
+    *)              error "Unknown command: $cmd"; show_help; exit 1 ;;
+  esac
+}
+
+main "$@"

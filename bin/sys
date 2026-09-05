@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly GREEN='\033[0;32m'
+readonly RED='\033[0;31m'
+readonly CYAN='\033[0;36m'
+readonly BOLD='\033[1m'
+readonly RESET='\033[0m'
+
+info()  { echo -e "${GREEN}✓${RESET} $*"; }
+error() { echo -e "${RED}✗${RESET} $*" >&2; }
+header() { echo -e "${BOLD}${CYAN}$*${RESET}"; }
+
+show_help() {
+  cat <<EOF
+Usage: sys <command> [args]
+
+Commands:
+  update              Update, upgrade, and clean packages
+  install <target>    Install a .deb file or apt package
+  uninstall <pkg>     Remove a package and clean up
+  help                Show this help
+
+Examples:
+  sys update
+  sys install ./package.deb
+  sys install curl
+  sys uninstall firefox
+EOF
+}
+
+sys_update() {
+  header "Updating package lists..."
+  sudo apt update
+
+  header "Upgrading packages..."
+  sudo apt upgrade -y
+
+  header "Removing unused packages..."
+  sudo apt autoremove -y
+
+  info "System updated."
+}
+
+sys_install() {
+  local target="${1:-}"
+  if [[ -z "$target" ]]; then
+    error "Missing target. Usage: sys install <file.deb|package>"
+    exit 1
+  fi
+
+  if [[ "$target" == *.deb ]]; then
+    if [[ ! -f "$target" ]]; then
+      error "File not found: $target"
+      exit 1
+    fi
+    header "Installing $target..."
+    sudo dpkg -i "$target"
+
+    header "Fixing dependencies..."
+    sudo apt -f install -y
+
+    header "Removing unused packages..."
+    sudo apt autoremove -y
+  else
+    header "Installing $target..."
+    sudo apt install -y "$target"
+  fi
+
+  info "$target installed."
+}
+
+sys_uninstall() {
+  local pkg="${1:-}"
+  if [[ -z "$pkg" ]]; then
+    error "Missing package name. Usage: sys uninstall <package>"
+    exit 1
+  fi
+
+  header "Removing $pkg..."
+  sudo apt remove --purge -y "$pkg"
+
+  header "Removing unused packages..."
+  sudo apt autoremove -y
+
+  info "$pkg removed."
+}
+
+main() {
+  local cmd="${1:-help}"
+  shift || true
+
+  case "$cmd" in
+    update)         sys_update ;;
+    install)        sys_install "$@" ;;
+    uninstall)      sys_uninstall "$@" ;;
+    help|--help|-h) show_help ;;
+    *)              error "Unknown command: $cmd"; show_help; exit 1 ;;
+  esac
+}
+
+main "$@"
