@@ -22,7 +22,7 @@ Commands:
   add <alias>        Add a new SSH connection (interactive)
   remove <alias>     Remove a saved connection
   list               List all configured connections
-  keygen [name]      Generate an SSH key pair (ed25519)
+  keygen [name]      Generate an SSH key pair (ed25519, rsa, ecdsa)
   help               Show this help
 
 Examples:
@@ -177,7 +177,28 @@ conn_list() {
 }
 
 conn_keygen() {
-  local name="${1:-id_ed25519}"
+  local name="${1:-}"
+  local key_type key_flags default_name
+
+  echo ""
+  header "Select key type:"
+  echo "  1) ed25519 (recommended)"
+  echo "  2) rsa"
+  echo "  3) ecdsa"
+  read -rp "  Choice [1]: " choice
+  choice="${choice:-1}"
+
+  case "$choice" in
+    1) key_type="ed25519"; key_flags="-t ed25519";       default_name="id_ed25519" ;;
+    2) key_type="rsa";     key_flags="-t rsa -b 4096";   default_name="id_rsa" ;;
+    3) key_type="ecdsa";   key_flags="-t ecdsa -b 521";  default_name="id_ecdsa" ;;
+    *)
+      error "Invalid choice: ${choice}"
+      exit 1
+      ;;
+  esac
+
+  name="${name:-$default_name}"
   local key_path="${HOME}/.ssh/${name}"
 
   if [[ -f "$key_path" ]]; then
@@ -187,8 +208,9 @@ conn_keygen() {
 
   mkdir -p "${HOME}/.ssh"
 
-  header "Generating ed25519 key: ${key_path}"
-  ssh-keygen -t ed25519 -f "$key_path"
+  header "Generating ${key_type} key: ${key_path}"
+  # shellcheck disable=SC2086
+  ssh-keygen ${key_flags} -f "$key_path"
 
   echo ""
   header "Public key:"

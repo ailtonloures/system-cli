@@ -70,7 +70,7 @@ conn hermes             # connect to a saved SSH host
 conn add hermes         # add a new connection (interactive)
 conn remove hermes      # remove a connection
 conn list               # list all configured connections
-conn keygen deploy      # generate an ed25519 key pair
+conn keygen deploy      # generate an SSH key pair (interactive type selection)
 ```
 
 ## License
