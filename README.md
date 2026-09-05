@@ -9,12 +9,14 @@ A collection of shell utilities for everyday Linux system administration.
 | `sys`   | Package management wrapper (update, install, uninstall) |
 | `vpn`   | WireGuard VPN manager (connect, disconnect, switch) |
 | `run`   | Script runner with interactive picker |
+| `conn`  | SSH connection manager (connect, add, remove, keygen) |
 
 ## Requirements
 
 - Bash 4+
 - `apt` package manager (Debian/Ubuntu)
 - `wg-quick` / WireGuard (for `vpn`)
+- `ssh` / OpenSSH (for `conn`)
 
 ## Installation
 
@@ -60,6 +62,16 @@ run backup              # run ~/Scripts/backup.sh directly
 ```
 
 Set `SCRIPTS_DIR` to change the default scripts directory.
+
+### conn
+
+```bash
+conn hermes             # connect to a saved SSH host
+conn add hermes         # add a new connection (interactive)
+conn remove hermes      # remove a connection
+conn list               # list all configured connections
+conn keygen deploy      # generate an ed25519 key pair
+```
 
 ## License
 

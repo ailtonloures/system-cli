@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly GREEN='\033[0;32m'
+readonly RED='\033[0;31m'
+readonly CYAN='\033[0;36m'
+readonly BOLD='\033[1m'
+readonly RESET='\033[0m'
+
+readonly SSH_CONFIG="${HOME}/.ssh/config"
+
+info()   { echo -e "${GREEN}✓${RESET} $*"; }
+error()  { echo -e "${RED}✗${RESET} $*" >&2; }
+header() { echo -e "${BOLD}${CYAN}$*${RESET}"; }
+
+show_help() {
+  cat <<EOF
+Usage: conn <command> [args]
+
+Commands:
+  <alias>            Connect to a saved SSH host
+  add <alias>        Add a new SSH connection (interactive)
+  remove <alias>     Remove a saved connection
+  list               List all configured connections
+  keygen [name]      Generate an SSH key pair (ed25519)
+  help               Show this help
+
+Examples:
+  conn hermes
+  conn add hermes
+  conn remove hermes
+  conn list
+  conn keygen deploy
+EOF
+}
+
+conn_ensure_config() {
+  mkdir -p "${HOME}/.ssh"
+  if [[ ! -f "$SSH_CONFIG" ]]; then
+    touch "$SSH_CONFIG"
+    chmod 600 "$SSH_CONFIG"
+  fi
+}
+
+conn_host_exists() {
+  local alias="$1"
+  grep -qiE "^Host[[:space:]]+${alias}$" "$SSH_CONFIG" 2>/dev/null
+}
+
+conn_connect() {
+  local alias="$1"
+  conn_ensure_config
+
+  if ! conn_host_exists "$alias"; then
+    error "Host '$alias' not found in ${SSH_CONFIG}"
+    echo "  Run: conn add $alias"
+    exit 1
+  fi
+
+  ssh "$alias"
+}
+
+conn_add() {
+  local alias="${1:-}"
+  if [[ -z "$alias" ]]; then
+    error "Missing alias. Usage: conn add <alias>"
+    exit 1
+  fi
+
+  conn_ensure_config
+
+  if conn_host_exists "$alias"; then
+    error "Host '$alias' already exists in ${SSH_CONFIG}"
+    exit 1
+  fi
+
+  header "Adding SSH connection: $alias"
+
+  local hostname user port identity_file
+
+  read -rp "  Hostname/IP: " hostname
+  if [[ -z "$hostname" ]]; then
+    error "Hostname cannot be empty."
+    exit 1
+  fi
+
+  read -rp "  User: " user
+  if [[ -z "$user" ]]; then
+    error "User cannot be empty."
+    exit 1
+  fi
+
+  read -rp "  Port [22]: " port
+  port="${port:-22}"
+
+  read -rp "  IdentityFile (leave empty to skip): " identity_file
+
+  {
+    echo ""
+    echo "Host $alias"
+    echo "  HostName $hostname"
+    echo "  User $user"
+    echo "  Port $port"
+    if [[ -n "$identity_file" ]]; then
+      echo "  IdentityFile $identity_file"
+    fi
+  } >> "$SSH_CONFIG"
+
+  info "Connection '$alias' added."
+}
+
+conn_remove() {
+  local alias="${1:-}"
+  if [[ -z "$alias" ]]; then
+    error "Missing alias. Usage: conn remove <alias>"
+    exit 1
+  fi
+
+  conn_ensure_config
+
+  if ! conn_host_exists "$alias"; then
+    error "Host '$alias' not found in ${SSH_CONFIG}"
+    exit 1
+  fi
+
+  read -rp "Remove '$alias' from SSH config? [y/N] " confirm
+  if [[ "$confirm" != [yY] ]]; then
+    echo "Cancelled."
+    return
+  fi
+
+  local tmp
+  tmp=$(mktemp)
+
+  awk -v host="$alias" '
+    BEGIN { skip=0 }
+    /^Host[[:space:]]/ {
+      if ($2 == host) { skip=1; next }
+      else { skip=0 }
+    }
+    skip && /^[[:space:]]/ { next }
+    skip && /^$/ { skip=0; next }
+    !skip { print }
+  ' "$SSH_CONFIG" > "$tmp"
+
+  mv "$tmp" "$SSH_CONFIG"
+  chmod 600 "$SSH_CONFIG"
+
+  info "Connection '$alias' removed."
+}
+
+conn_list() {
+  conn_ensure_config
+
+  if [[ ! -s "$SSH_CONFIG" ]]; then
+    echo "No connections configured."
+    return
+  fi
+
+  local found=0
+
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^Host[[:space:]]+(.+)$ ]]; then
+      local alias="${BASH_REMATCH[1]}"
+      [[ "$alias" == "*" ]] && continue
+      local hostname user
+      hostname=$(ssh -G "$alias" 2>/dev/null | awk '/^hostname / {print $2}')
+      user=$(ssh -G "$alias" 2>/dev/null | awk '/^user / {print $2}')
+      echo -e "  ${GREEN}${alias}${RESET} → ${user}@${hostname}"
+      found=1
+    fi
+  done < "$SSH_CONFIG"
+
+  if [[ "$found" -eq 0 ]]; then
+    echo "No connections configured."
+  fi
+}
+
+conn_keygen() {
+  local name="${1:-id_ed25519}"
+  local key_path="${HOME}/.ssh/${name}"
+
+  if [[ -f "$key_path" ]]; then
+    error "Key already exists: ${key_path}"
+    exit 1
+  fi
+
+  mkdir -p "${HOME}/.ssh"
+
+  header "Generating ed25519 key: ${key_path}"
+  ssh-keygen -t ed25519 -f "$key_path"
+
+  echo ""
+  header "Public key:"
+  cat "${key_path}.pub"
+}
+
+main() {
+  local cmd="${1:-help}"
+  shift || true
+
+  case "$cmd" in
+    add)            conn_add "$@" ;;
+    remove)         conn_remove "$@" ;;
+    list|ls)        conn_list ;;
+    keygen)         conn_keygen "$@" ;;
+    help|--help|-h) show_help ;;
+    *)              conn_connect "$cmd" ;;
+  esac
+}
+
+main "$@"

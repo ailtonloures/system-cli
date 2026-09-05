@@ -1,4 +1,4 @@
-SCRIPTS := sys vpn run
+SCRIPTS := sys vpn run conn
 BIN_DIR := $(HOME)/.local/bin
 SRC_DIR := $(shell pwd)/bin
 
