@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="system-cli logo" width="160">
+</p>
+
 # system-cli
 
 A collection of shell utilities for everyday system administration on **Debian/Ubuntu, Fedora, and macOS**.
