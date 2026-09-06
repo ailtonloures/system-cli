@@ -1,0 +1,232 @@
+#!/usr/bin/env bash
+# lib/os.sh — OS / package-manager detection middleware for system-cli.
+#
+# Source this from a bin/ script after its color/log helpers (info/error/header)
+# are already defined, e.g.:
+#
+#   _src="${BASH_SOURCE[0]}"
+#   while [[ -h "$_src" ]]; do
+#     _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+#     _src="$(readlink "$_src")"
+#     [[ "$_src" != /* ]] && _src="$_dir/$_src"
+#   done
+#   readonly SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+#   source "${SCRIPT_DIR}/../lib/os.sh"
+#
+# Supported operating systems: Debian/Ubuntu (apt), Fedora/RHEL-family (dnf),
+# macOS (brew).
+
+# --- Detection ---------------------------------------------------------------
+
+# detect_os: prints one of debian|fedora|macos|unknown
+detect_os() {
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    echo "macos"
+    return
+  fi
+
+  if [[ -f /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    source /etc/os-release
+    case "${ID:-}" in
+      ubuntu|debian|linuxmint|pop) echo "debian"; return ;;
+      fedora|rhel|centos|rocky|almalinux) echo "fedora"; return ;;
+    esac
+    case "${ID_LIKE:-}" in
+      *debian*)          echo "debian"; return ;;
+      *fedora*|*rhel*)   echo "fedora"; return ;;
+    esac
+  fi
+
+  echo "unknown"
+}
+
+# detect_pkg_manager: prints one of apt|dnf|brew|unknown
+detect_pkg_manager() {
+  case "$(detect_os)" in
+    debian) echo "apt" ;;
+    fedora) echo "dnf" ;;
+    macos)  echo "brew" ;;
+    *)      echo "unknown" ;;
+  esac
+}
+
+# pkg_manager_or_die: resolves the package manager or exits with a clear error.
+pkg_manager_or_die() {
+  local pm
+  pm="$(detect_pkg_manager)"
+
+  if [[ "$pm" == "unknown" ]]; then
+    error "Unsupported operating system. system-cli supports Debian/Ubuntu, Fedora, and macOS."
+    exit 1
+  fi
+
+  if ! command -v "$pm" &>/dev/null; then
+    error "Package manager '$pm' not found on this system."
+    if [[ "$pm" == "brew" ]]; then
+      error "Install Homebrew first: https://brew.sh"
+    fi
+    exit 1
+  fi
+
+  echo "$pm"
+}
+
+# pkg_needs_sudo: exit status 0 (true) unless on brew.
+pkg_needs_sudo() {
+  [[ "$(detect_pkg_manager)" != "brew" ]]
+}
+
+_run_pkg() {
+  if pkg_needs_sudo; then
+    sudo "$@"
+  else
+    "$@"
+  fi
+}
+
+# require_bash <min-major-version>: exits with a helpful message if the
+# running Bash is older than required. macOS ships Bash 3.2 by default.
+require_bash() {
+  local min="${1:-4}"
+  if (( BASH_VERSINFO[0] < min )); then
+    error "This command requires Bash ${min}+ (found ${BASH_VERSION})."
+    if [[ "$(detect_os)" == "macos" ]]; then
+      error "macOS ships an old Bash (3.2) for licensing reasons. Install a modern one:"
+      error "  brew install bash"
+      error "Then make sure Homebrew's bin directory comes before /bin in your PATH"
+      error "(e.g. add 'export PATH=\"/opt/homebrew/bin:\$PATH\"' to your shell profile)."
+    fi
+    exit 1
+  fi
+}
+
+# --- Logical package name -> real package name per OS ------------------------
+# Usage: pkg_map_name <logical-name>
+# Logical names: ssh-client, cron-daemon, wireguard, curl
+# Returns an empty string when the tool ships with the OS and needs no package.
+pkg_map_name() {
+  local logical="$1"
+  local os
+  os="$(detect_os)"
+
+  case "$logical" in
+    ssh-client)
+      case "$os" in
+        debian) echo "openssh-client" ;;
+        fedora) echo "openssh-clients" ;;
+        macos)  echo "" ;;
+      esac
+      ;;
+    cron-daemon)
+      case "$os" in
+        debian) echo "cron" ;;
+        fedora) echo "cronie" ;;
+        macos)  echo "" ;;
+      esac
+      ;;
+    wireguard)
+      case "$os" in
+        debian) echo "wireguard-tools" ;;
+        fedora) echo "wireguard-tools" ;;
+        macos)  echo "wireguard-tools" ;;
+      esac
+      ;;
+    curl)
+      echo "curl"
+      ;;
+    *)
+      echo "$logical"
+      ;;
+  esac
+}
+
+# --- Generic package operations ----------------------------------------------
+
+pkg_update() {
+  local pm
+  pm="$(pkg_manager_or_die)"
+
+  case "$pm" in
+    apt)
+      _run_pkg apt update
+      _run_pkg apt upgrade -y
+      _run_pkg apt autoremove -y
+      ;;
+    dnf)
+      _run_pkg dnf upgrade --refresh -y
+      _run_pkg dnf autoremove -y
+      ;;
+    brew)
+      brew update
+      brew upgrade
+      brew cleanup
+      ;;
+  esac
+}
+
+# pkg_install <target>
+# target may be a repository package name, or a local package file
+# (.deb on Debian/Ubuntu, .rpm on Fedora, .pkg on macOS).
+pkg_install() {
+  local target="$1"
+  local pm
+  pm="$(pkg_manager_or_die)"
+
+  case "$target" in
+    *.deb)
+      if [[ "$pm" != "apt" ]]; then
+        error ".deb packages are only supported on Debian/Ubuntu (detected: ${pm})."
+        exit 1
+      fi
+      [[ -f "$target" ]] || { error "File not found: $target"; exit 1; }
+      _run_pkg dpkg -i "$target"
+      _run_pkg apt -f install -y
+      _run_pkg apt autoremove -y
+      ;;
+    *.rpm)
+      if [[ "$pm" != "dnf" ]]; then
+        error ".rpm packages are only supported on Fedora/RHEL-family (detected: ${pm})."
+        exit 1
+      fi
+      [[ -f "$target" ]] || { error "File not found: $target"; exit 1; }
+      _run_pkg dnf install -y "$target"
+      ;;
+    *.pkg)
+      if [[ "$pm" != "brew" ]]; then
+        error ".pkg installers are only supported on macOS (detected: ${pm})."
+        exit 1
+      fi
+      [[ -f "$target" ]] || { error "File not found: $target"; exit 1; }
+      sudo installer -pkg "$target" -target /
+      ;;
+    *)
+      case "$pm" in
+        apt)  _run_pkg apt install -y "$target" ;;
+        dnf)  _run_pkg dnf install -y "$target" ;;
+        brew) brew install "$target" ;;
+      esac
+      ;;
+  esac
+}
+
+pkg_remove() {
+  local pkg="$1"
+  local pm
+  pm="$(pkg_manager_or_die)"
+
+  case "$pm" in
+    apt)
+      _run_pkg apt remove --purge -y "$pkg"
+      _run_pkg apt autoremove -y
+      ;;
+    dnf)
+      _run_pkg dnf remove -y "$pkg"
+      _run_pkg dnf autoremove -y
+      ;;
+    brew)
+      brew uninstall "$pkg"
+      brew cleanup
+      ;;
+  esac
+}
