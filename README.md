@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="system-cli logo" width="160">
+  <img src="assets/logo.svg" alt="system-cli logo" width="160">
 </p>
 
 # system-cli
