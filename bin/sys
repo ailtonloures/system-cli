@@ -11,20 +11,37 @@ info()  { echo -e "${GREEN}✓${RESET} $*"; }
 error() { echo -e "${RED}✗${RESET} $*" >&2; }
 header() { echo -e "${BOLD}${CYAN}$*${RESET}"; }
 
+# Resolve the script's real directory (following symlinks, since this is
+# typically invoked via a `~/.local/bin/sys` symlink) to locate lib/os.sh.
+_src="${BASH_SOURCE[0]}"
+while [[ -h "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+readonly SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+
+# shellcheck source=../lib/os.sh
+source "${SCRIPT_DIR}/../lib/os.sh"
+
 show_help() {
   cat <<EOF
 Usage: sys <command> [args]
 
 Commands:
   update              Update, upgrade, and clean packages
-  install <target>    Install a .deb file or apt package
+  install <target>    Install a local package file or a repository package
   uninstall <pkg>     Remove a package and clean up
   deps                Check and install all script dependencies
   help                Show this help
 
+Supported OS: Debian/Ubuntu (apt), Fedora (dnf), macOS (brew)
+
 Examples:
   sys update
-  sys install ./package.deb
+  sys install ./package.deb   # Debian/Ubuntu only
+  sys install ./package.rpm   # Fedora only
+  sys install ./package.pkg   # macOS only
   sys install curl
   sys uninstall firefox
   sys deps
@@ -32,43 +49,20 @@ EOF
 }
 
 sys_update() {
-  header "Updating package lists..."
-  sudo apt update
-
-  header "Upgrading packages..."
-  sudo apt upgrade -y
-
-  header "Removing unused packages..."
-  sudo apt autoremove -y
-
+  header "Updating and upgrading packages..."
+  pkg_update
   info "System updated."
 }
 
 sys_install() {
   local target="${1:-}"
   if [[ -z "$target" ]]; then
-    error "Missing target. Usage: sys install <file.deb|package>"
+    error "Missing target. Usage: sys install <file|package>"
     exit 1
   fi
 
-  if [[ "$target" == *.deb ]]; then
-    if [[ ! -f "$target" ]]; then
-      error "File not found: $target"
-      exit 1
-    fi
-    header "Installing $target..."
-    sudo dpkg -i "$target"
-
-    header "Fixing dependencies..."
-    sudo apt -f install -y
-
-    header "Removing unused packages..."
-    sudo apt autoremove -y
-  else
-    header "Installing $target..."
-    sudo apt install -y "$target"
-  fi
-
+  header "Installing $target..."
+  pkg_install "$target"
   info "$target installed."
 }
 
@@ -80,37 +74,49 @@ sys_uninstall() {
   fi
 
   header "Removing $pkg..."
-  sudo apt remove --purge -y "$pkg"
-
-  header "Removing unused packages..."
-  sudo apt autoremove -y
-
+  pkg_remove "$pkg"
   info "$pkg removed."
 }
 
 sys_deps() {
-  declare -A deps=(
+  # Logical dependency name -> command used to check if it's already present.
+  declare -A logical_deps=(
     [curl]="curl"
-    [ssh]="openssh-client"
-    [ssh-keygen]="openssh-client"
-    [crontab]="cron"
-    [wg]="wireguard-tools"
-    [wg-quick]="wireguard-tools"
+    [ssh-client]="ssh"
+    [cron-daemon]="crontab"
+    [wireguard]="wg-quick"
   )
 
-  local installed=()
+  local os
+  os="$(detect_os)"
+  if [[ "$os" == "unknown" ]]; then
+    error "Unsupported operating system. system-cli supports Debian/Ubuntu, Fedora, and macOS."
+    exit 1
+  fi
+
   local to_install=()
 
-  header "Checking dependencies..."
+  header "Checking dependencies (detected OS: ${os})..."
 
-  for cmd in "${!deps[@]}"; do
-    local pkg="${deps[$cmd]}"
-    if command -v "$cmd" &>/dev/null; then
-      info "$cmd already installed ($pkg)"
-    else
-      if [[ ! " ${to_install[*]} " =~ " ${pkg} " ]]; then
-        to_install+=("$pkg")
-      fi
+  for logical in "${!logical_deps[@]}"; do
+    local check_cmd="${logical_deps[$logical]}"
+    if command -v "$check_cmd" &>/dev/null; then
+      info "${logical} already installed"
+      continue
+    fi
+
+    local pkg
+    pkg="$(pkg_map_name "$logical")"
+
+    if [[ -z "$pkg" ]]; then
+      # Ships with the OS (e.g. ssh/cron are built into macOS) but the
+      # binary wasn't found — nothing we can install for it.
+      info "${logical} ships with ${os}; nothing to install"
+      continue
+    fi
+
+    if [[ ! " ${to_install[*]:-} " =~ " ${pkg} " ]]; then
+      to_install+=("$pkg")
     fi
   done
 
@@ -120,7 +126,9 @@ sys_deps() {
   fi
 
   header "Installing missing packages: ${to_install[*]}"
-  sudo apt install -y "${to_install[@]}"
+  for pkg in "${to_install[@]}"; do
+    pkg_install "$pkg"
+  done
 
   info "All dependencies installed."
 }
