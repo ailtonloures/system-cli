@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly GREEN='\033[0;32m'
+readonly RED='\033[0;31m'
+readonly CYAN='\033[0;36m'
+readonly BOLD='\033[1m'
+readonly RESET='\033[0m'
+
+info()  { echo -e "${GREEN}✓${RESET} $*"; }
+error() { echo -e "${RED}✗${RESET} $*" >&2; }
+header() { echo -e "${BOLD}${CYAN}$*${RESET}"; }
+
+show_help() {
+  cat <<EOF
+Usage: dkc <command> [args]
+
+Shorthand for docker compose.
+
+Commands:
+  up [args]           Start services (foreground; use -d for detached)
+  down [args]         Stop and remove services
+  restart [args]      Restart services
+  logs [args]         Follow service logs (-f by default)
+  ps [args]           List running services
+  build [args]        Build or rebuild services
+  pull [args]         Pull service images
+  exec <svc> [cmd]    Execute a command in a running service
+  run <svc> [cmd]     Run a one-off command in a service
+  stop [args]         Stop services
+  start [args]        Start stopped services
+  help                Show this help
+
+Any unrecognized command is forwarded to docker compose directly.
+
+Examples:
+  dkc up -d
+  dkc logs api
+  dkc exec web bash
+  dkc config
+EOF
+}
+
+dkc_check_deps() {
+  if ! command -v docker &>/dev/null; then
+    error "docker is required but not installed."
+    exit 1
+  fi
+}
+
+main() {
+  dkc_check_deps
+
+  local cmd="${1:-help}"
+  shift || true
+
+  case "$cmd" in
+    up)                exec docker compose up "$@" ;;
+    down)              exec docker compose down "$@" ;;
+    restart)           exec docker compose restart "$@" ;;
+    logs)              exec docker compose logs -f "$@" ;;
+    ps)                exec docker compose ps "$@" ;;
+    build)             exec docker compose build "$@" ;;
+    pull)              exec docker compose pull "$@" ;;
+    exec)              exec docker compose exec "$@" ;;
+    run)               exec docker compose run "$@" ;;
+    stop)              exec docker compose stop "$@" ;;
+    start)             exec docker compose start "$@" ;;
+    help|--help|-h)    show_help ;;
+    *)                 exec docker compose "$cmd" "$@" ;;
+  esac
+}
+
+main "$@"

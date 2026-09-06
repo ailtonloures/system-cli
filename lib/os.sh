@@ -266,6 +266,51 @@ install_lazydocker() {
   rm -rf "$tmp_dir"
 }
 
+install_wrk() {
+  local os
+  os="$(detect_os)"
+
+  if [[ "$os" == "macos" ]]; then
+    brew install wrk
+    return
+  fi
+
+  local -a missing=()
+  command -v git &>/dev/null || missing+=(git)
+  command -v make &>/dev/null || missing+=(make)
+  command -v gcc &>/dev/null || missing+=(gcc)
+
+  case "$os" in
+    debian) dpkg -s libssl-dev &>/dev/null 2>&1 || missing+=(libssl-dev) ;;
+    fedora) rpm -q openssl-devel &>/dev/null 2>&1 || missing+=(openssl-devel) ;;
+    *)      error "Unsupported OS for wrk installation."; exit 1 ;;
+  esac
+
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    header "Installing build dependencies: ${missing[*]}"
+    for dep in "${missing[@]}"; do
+      pkg_install "$dep"
+    done
+  fi
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "$tmp_dir"' EXIT
+
+  header "Building wrk from source..."
+  git clone --depth 1 https://github.com/wg/wrk.git "$tmp_dir/wrk"
+  make -C "$tmp_dir/wrk" -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)"
+
+  mkdir -p "${HOME}/.local/bin"
+  cp "$tmp_dir/wrk/wrk" "${HOME}/.local/bin/wrk"
+  chmod +x "${HOME}/.local/bin/wrk"
+
+  info "wrk installed to ~/.local/bin/wrk"
+
+  trap - EXIT
+  rm -rf "$tmp_dir"
+}
+
 pkg_remove() {
   local pkg="$1"
   local pm

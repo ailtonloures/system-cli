@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly GREEN='\033[0;32m'
+readonly RED='\033[0;31m'
+readonly CYAN='\033[0;36m'
+readonly YELLOW='\033[0;33m'
+readonly BOLD='\033[1m'
+readonly RESET='\033[0m'
+
+info()   { echo -e "${GREEN}✓${RESET} $*"; }
+error()  { echo -e "${RED}✗${RESET} $*" >&2; }
+header() { echo -e "${BOLD}${CYAN}$*${RESET}"; }
+
+_src="${BASH_SOURCE[0]}"
+while [[ -h "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+readonly SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+
+# shellcheck source=../lib/os.sh
+source "${SCRIPT_DIR}/../lib/os.sh"
+
+show_help() {
+  cat <<EOF
+Usage: stress <command> [args]
+
+Commands:
+  run <url> [options]    Run a stress test with custom parameters
+  quick <url>            Run a quick stress test with sensible defaults
+  help                   Show this help
+
+Options (for 'run'):
+  -t <threads>           Number of threads (default: 4)
+  -c <connections>       Number of connections (default: 100)
+  -d <duration>          Test duration (default: 10s)
+
+Examples:
+  stress quick https://api.example.com/health
+  stress run https://api.example.com/users -t 8 -c 200 -d 30s
+
+Project: https://github.com/wg/wrk
+EOF
+}
+
+stress_check_deps() {
+  if ! command -v wrk &>/dev/null; then
+    header "wrk not found. Installing..."
+    install_wrk
+    info "wrk installed."
+  fi
+}
+
+stress_run() {
+  local url="${1:-}"
+  if [[ -z "$url" ]]; then
+    error "Missing URL. Usage: stress run <url> [options]"
+    exit 1
+  fi
+  shift
+
+  local threads=4
+  local connections=100
+  local duration="10s"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -t) threads="${2:-}"; shift 2 ;;
+      -c) connections="${2:-}"; shift 2 ;;
+      -d) duration="${2:-}"; shift 2 ;;
+      *)  error "Unknown option: $1"; exit 1 ;;
+    esac
+  done
+
+  if [[ ! "$url" =~ ^https?:// ]]; then
+    error "URL must start with http:// or https://"
+    exit 1
+  fi
+
+  header "Stress test: ${url}"
+  echo -e "  Threads: ${YELLOW}${threads}${RESET}  Connections: ${YELLOW}${connections}${RESET}  Duration: ${YELLOW}${duration}${RESET}"
+  echo ""
+
+  wrk -t"$threads" -c"$connections" -d"$duration" "$url"
+}
+
+stress_quick() {
+  local url="${1:-}"
+  if [[ -z "$url" ]]; then
+    error "Missing URL. Usage: stress quick <url>"
+    exit 1
+  fi
+
+  stress_run "$url"
+}
+
+main() {
+  stress_check_deps
+
+  local cmd="${1:-help}"
+  shift || true
+
+  case "$cmd" in
+    run)              stress_run "$@" ;;
+    quick)            stress_quick "$@" ;;
+    help|--help|-h)   show_help ;;
+    *)                error "Unknown command: $cmd"; show_help; exit 1 ;;
+  esac
+}
+
+main "$@"

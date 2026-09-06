@@ -1,4 +1,4 @@
-SCRIPTS := sys vpn run conn cron http dk
+SCRIPTS := sys vpn run conn cron http dk dkc stress
 BIN_DIR := $(HOME)/.local/bin
 SRC_DIR := $(shell pwd)/bin
 LIB_DIR := $(shell pwd)/lib
