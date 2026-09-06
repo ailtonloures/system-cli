@@ -10,12 +10,13 @@ A collection of shell utilities for everyday system administration on **Debian/U
 
 | Command | Description |
 |---------|-------------|
-| `sys`   | Package management wrapper (update, install, uninstall) — auto-detects apt/dnf/brew |
+| `sys`   | System manager — packages (update, install, uninstall) and processes (list, filter, kill) — auto-detects apt/dnf/brew |
 | `vpn`   | WireGuard VPN manager (connect, disconnect, switch) |
 | `run`   | Script runner with interactive picker |
 | `conn`  | SSH connection manager (connect, add, remove, keygen) |
 | `cron`  | Cron job manager (add, remove, update, list) |
 | `http`  | HTTP client with curl (requests, clients, saved requests) |
+| `dk`    | Docker manager — launches lazydocker TUI |
 
 ## Supported operating systems
 
@@ -33,6 +34,7 @@ A collection of shell utilities for everyday system administration on **Debian/U
 - A supported package manager: `apt`, `dnf`, or `brew`
 - `wg-quick` / WireGuard (for `vpn`)
 - `ssh` / OpenSSH (for `conn`) — preinstalled on macOS and most distros; `sys deps` installs it otherwise
+- Docker (for `dk`) — lazydocker is installed automatically via `sys deps` or on first run of `dk`
 
 ### macOS notes
 
@@ -78,6 +80,22 @@ sys deps                # check and install missing dependencies for all tools
 
 Local package file installation is OS-specific: a `.deb` only works on Debian/Ubuntu, `.rpm` only on Fedora, and `.pkg` only on macOS. Attempting to install the wrong format for your OS produces a clear error.
 
+#### sys ps
+
+List and manage system processes. Shows PID, CPU%, memory%, command name, executable path, and listening port (if any).
+
+```bash
+sys ps                  # list all processes sorted by CPU usage
+sys ps node             # filter processes by name
+sys ps --port 3000      # filter processes by listening port
+sys ps node --port 8080 # combine name and port filters
+sys ps kill 1234        # kill a process by PID (with confirmation)
+```
+
+The `kill` subcommand sends `SIGTERM` first. If the process survives after 2 seconds, it offers to escalate to `SIGKILL`.
+
+> **Note:** port detection uses `ss` (Linux) or `lsof` (macOS) and may require `sudo` for full visibility of ports owned by other users. Requires Bash 4+.
+
 ### vpn
 
 ```bash
@@ -117,6 +135,15 @@ cron remove backup                                            # remove a cron jo
 ```
 
 > On macOS, remember to grant Full Disk Access to your terminal app — see [macOS notes](#macos-notes).
+
+### dk
+
+```bash
+dk              # open lazydocker
+dk --help       # show help
+```
+
+Requires Docker to be running. If `lazydocker` is not installed, `dk` will install it automatically (from Homebrew on macOS, or from GitHub Releases on Linux).
 
 ### http
 

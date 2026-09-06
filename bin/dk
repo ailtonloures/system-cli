@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly GREEN='\033[0;32m'
+readonly RED='\033[0;31m'
+readonly CYAN='\033[0;36m'
+readonly BOLD='\033[1m'
+readonly RESET='\033[0m'
+
+info()  { echo -e "${GREEN}✓${RESET} $*"; }
+error() { echo -e "${RED}✗${RESET} $*" >&2; }
+header() { echo -e "${BOLD}${CYAN}$*${RESET}"; }
+
+_src="${BASH_SOURCE[0]}"
+while [[ -h "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+readonly SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+
+# shellcheck source=../lib/os.sh
+source "${SCRIPT_DIR}/../lib/os.sh"
+
+show_help() {
+  cat <<EOF
+Usage: dk [options]
+
+Opens lazydocker — a terminal UI for Docker and Docker Compose.
+
+Options:
+  help, --help, -h    Show this help
+
+If lazydocker is not installed, you will be prompted to install it.
+Requires Docker to be running.
+
+Project: https://github.com/jesseduffield/lazydocker
+EOF
+}
+
+main() {
+  local cmd="${1:-}"
+
+  case "$cmd" in
+    help|--help|-h) show_help; return ;;
+  esac
+
+  if ! command -v lazydocker &>/dev/null; then
+    header "lazydocker not found. Installing..."
+    install_lazydocker
+    info "lazydocker installed."
+  fi
+
+  exec lazydocker "$@"
+}
+
+main "$@"

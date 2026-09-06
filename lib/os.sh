@@ -132,6 +132,13 @@ pkg_map_name() {
         macos)  echo "wireguard-tools" ;;
       esac
       ;;
+    lazydocker)
+      case "$os" in
+        debian) echo "lazydocker" ;;
+        fedora) echo "lazydocker" ;;
+        macos)  echo "lazydocker" ;;
+      esac
+      ;;
     curl)
       echo "curl"
       ;;
@@ -208,6 +215,55 @@ pkg_install() {
       esac
       ;;
   esac
+}
+
+# install_lazydocker: installs lazydocker from Homebrew (macOS) or GitHub
+# Releases binary (Linux) into ~/.local/bin.
+install_lazydocker() {
+  local os
+  os="$(detect_os)"
+
+  if [[ "$os" == "macos" ]]; then
+    brew install lazydocker
+    return
+  fi
+
+  if ! command -v curl &>/dev/null; then
+    error "curl is required to install lazydocker. Run: sys deps"
+    exit 1
+  fi
+
+  local arch
+  case "$(uname -m)" in
+    x86_64)       arch="x86_64" ;;
+    aarch64|arm64) arch="arm64" ;;
+    *)            error "Unsupported architecture: $(uname -m)"; exit 1 ;;
+  esac
+
+  local latest_url
+  latest_url="$(curl -sI https://github.com/jesseduffield/lazydocker/releases/latest \
+    | grep -i '^location:' | tr -d '\r' | awk '{print $2}')"
+  local version="${latest_url##*/}"
+
+  local tarball="lazydocker_${version#v}_Linux_${arch}.tar.gz"
+  local download_url="https://github.com/jesseduffield/lazydocker/releases/download/${version}/${tarball}"
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "$tmp_dir"' EXIT
+
+  header "Downloading lazydocker ${version} for Linux ${arch}..."
+  curl -sL "$download_url" -o "${tmp_dir}/${tarball}"
+  tar -xzf "${tmp_dir}/${tarball}" -C "$tmp_dir"
+
+  mkdir -p "${HOME}/.local/bin"
+  mv "${tmp_dir}/lazydocker" "${HOME}/.local/bin/lazydocker"
+  chmod +x "${HOME}/.local/bin/lazydocker"
+
+  info "lazydocker ${version} installed to ~/.local/bin/lazydocker"
+
+  trap - EXIT
+  rm -rf "$tmp_dir"
 }
 
 pkg_remove() {

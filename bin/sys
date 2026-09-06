@@ -33,6 +33,9 @@ Commands:
   install <target>    Install a local package file or a repository package
   uninstall <pkg>     Remove a package and clean up
   deps                Check and install all script dependencies
+  ps [term]           List processes (optional name filter)
+  ps --port <port>    List processes listening on a specific port
+  ps kill <pid>       Kill a process by PID
   help                Show this help
 
 Supported OS: Debian/Ubuntu (apt), Fedora (dnf), macOS (brew)
@@ -85,6 +88,7 @@ sys_deps() {
     [ssh-client]="ssh"
     [cron-daemon]="crontab"
     [wireguard]="wg-quick"
+    [lazydocker]="lazydocker"
   )
 
   local os
@@ -127,10 +131,258 @@ sys_deps() {
 
   header "Installing missing packages: ${to_install[*]}"
   for pkg in "${to_install[@]}"; do
-    pkg_install "$pkg"
+    if [[ "$pkg" == "lazydocker" ]]; then
+      install_lazydocker
+    else
+      pkg_install "$pkg"
+    fi
   done
 
   info "All dependencies installed."
+}
+
+_ps_show_help() {
+  cat <<EOF
+Usage: sys ps [command] [options]
+
+Commands:
+  (none)              List all processes sorted by CPU usage
+  <term>              Filter processes by name
+  kill <pid>          Kill a process by PID
+  help                Show this help
+
+Options:
+  --port <port>       Filter processes by listening port
+
+Examples:
+  sys ps              # List all processes
+  sys ps nginx        # Filter by name "nginx"
+  sys ps --port 3000  # Filter by port 3000
+  sys ps kill 1234    # Kill process 1234
+EOF
+}
+
+_ps_port_map() {
+  declare -gA _PORT_MAP=()
+  local os
+  os="$(detect_os)"
+
+  case "$os" in
+    debian|fedora)
+      if ! command -v ss &>/dev/null; then return; fi
+      local ss_output
+      ss_output="$(sudo ss -tlnp 2>/dev/null || ss -tlnp 2>/dev/null)" || return
+      while IFS= read -r line; do
+        local port pid
+        port="$(echo "$line" | awk '{print $4}' | rev | cut -d: -f1 | rev)"
+        pid="$(echo "$line" | grep -oP 'pid=\K[0-9]+' 2>/dev/null)" || continue
+        [[ -z "$pid" || -z "$port" ]] && continue
+        if [[ -n "${_PORT_MAP[$pid]:-}" ]]; then
+          [[ "${_PORT_MAP[$pid]}" == *"$port"* ]] || _PORT_MAP[$pid]="${_PORT_MAP[$pid]},$port"
+        else
+          _PORT_MAP[$pid]="$port"
+        fi
+      done <<< "$ss_output"
+      ;;
+    macos)
+      if ! command -v lsof &>/dev/null; then return; fi
+      local lsof_output
+      lsof_output="$(sudo lsof -iTCP -sTCP:LISTEN -nP 2>/dev/null || lsof -iTCP -sTCP:LISTEN -nP 2>/dev/null)" || return
+      while IFS= read -r line; do
+        [[ "$line" == COMMAND* ]] && continue
+        local pid port
+        pid="$(echo "$line" | awk '{print $2}')"
+        port="$(echo "$line" | awk '{print $NF}' | rev | cut -d: -f1 | rev)"
+        [[ -z "$pid" || -z "$port" ]] && continue
+        if [[ -n "${_PORT_MAP[$pid]:-}" ]]; then
+          [[ "${_PORT_MAP[$pid]}" == *"$port"* ]] || _PORT_MAP[$pid]="${_PORT_MAP[$pid]},$port"
+        else
+          _PORT_MAP[$pid]="$port"
+        fi
+      done <<< "$lsof_output"
+      ;;
+  esac
+}
+
+_ps_exe_path() {
+  local pid="$1"
+  local os
+  os="$(detect_os)"
+
+  case "$os" in
+    debian|fedora)
+      local path
+      path="$(readlink -f "/proc/${pid}/exe" 2>/dev/null)" || { echo "-"; return; }
+      path="${path% (deleted)}"
+      [[ -n "$path" ]] && echo "$path" || echo "-"
+      ;;
+    macos)
+      local path
+      path="$(ps -o comm= -p "$pid" 2>/dev/null)" || { echo "-"; return; }
+      [[ -n "$path" ]] && echo "$path" || echo "-"
+      ;;
+    *)
+      echo "-"
+      ;;
+  esac
+}
+
+sys_ps_list() {
+  local filter="${1:-}"
+  local port_filter="${2:-}"
+
+  require_bash 4
+
+  _ps_port_map
+
+  local os
+  os="$(detect_os)"
+
+  local ps_output
+  case "$os" in
+    debian|fedora)
+      ps_output="$(ps -eo pid=,pcpu=,pmem=,comm= --sort=-%cpu 2>/dev/null)" || {
+        error "Failed to list processes."; exit 1
+      }
+      ;;
+    macos)
+      ps_output="$(ps -eo pid=,pcpu=,pmem=,comm= -r 2>/dev/null)" || {
+        error "Failed to list processes."; exit 1
+      }
+      ;;
+    *)
+      error "Unsupported OS for process listing."
+      exit 1
+      ;;
+  esac
+
+  if [[ -n "$filter" ]]; then
+    ps_output="$(echo "$ps_output" | grep -i "$filter")" || true
+  fi
+
+  header "System Processes"
+  echo ""
+  printf "  ${BOLD}%-8s %-8s %-8s %-20s %-40s %s${RESET}\n" "PID" "CPU%" "MEM%" "COMMAND" "PATH" "PORT"
+  printf "  %-8s %-8s %-8s %-20s %-40s %s\n" "────────" "────────" "────────" "────────────────────" "────────────────────────────────────────" "────────"
+
+  local count=0
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    local pid cpu mem comm
+    pid="$(echo "$line" | awk '{print $1}')"
+    cpu="$(echo "$line" | awk '{print $2}')"
+    mem="$(echo "$line" | awk '{print $3}')"
+    comm="$(echo "$line" | awk '{print $4}')"
+
+    local path port
+    path="$(_ps_exe_path "$pid")"
+    port="${_PORT_MAP[$pid]:-"-"}"
+
+    if [[ -n "$port_filter" ]]; then
+      [[ "$port" == "-" ]] && continue
+      local match=0
+      IFS=',' read -ra ports <<< "$port"
+      for p in "${ports[@]}"; do
+        [[ "$p" == "$port_filter" ]] && match=1 && break
+      done
+      [[ "$match" -eq 0 ]] && continue
+    fi
+
+    printf "  %-8s %-8s %-8s %-20s %-40s %s\n" "$pid" "$cpu" "$mem" "${comm:0:20}" "${path:0:40}" "$port"
+    ((count++)) || true
+  done <<< "$ps_output"
+
+  echo ""
+  info "${count} processes listed."
+}
+
+sys_ps_kill() {
+  local pid="${1:-}"
+  if [[ -z "$pid" ]]; then
+    error "Missing PID. Usage: sys ps kill <pid>"
+    exit 1
+  fi
+
+  if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+    error "Invalid PID: $pid (must be a number)"
+    exit 1
+  fi
+
+  if ! kill -0 "$pid" 2>/dev/null; then
+    error "Process $pid not found or not accessible."
+    exit 1
+  fi
+
+  local proc_info
+  proc_info="$(ps -p "$pid" -o pid=,pcpu=,pmem=,comm= 2>/dev/null)" || true
+  if [[ -n "$proc_info" ]]; then
+    header "Process details:"
+    echo "  $proc_info"
+    echo ""
+  fi
+
+  local confirm
+  read -rp "Kill process $pid? [y/N] " confirm
+  if [[ "$confirm" != [yY] ]]; then
+    info "Cancelled."
+    return
+  fi
+
+  kill "$pid" 2>/dev/null || { error "Failed to send SIGTERM to $pid."; exit 1; }
+
+  sleep 2
+
+  if kill -0 "$pid" 2>/dev/null; then
+    local force
+    read -rp "Process $pid still running. Force kill (SIGKILL)? [y/N] " force
+    if [[ "$force" == [yY] ]]; then
+      kill -9 "$pid" 2>/dev/null || { error "Failed to send SIGKILL to $pid."; exit 1; }
+      info "Process $pid force killed."
+    else
+      info "Process $pid may still be running."
+    fi
+  else
+    info "Process $pid killed."
+  fi
+}
+
+sys_ps() {
+  local subcmd=""
+  local port_filter=""
+  local filter=""
+  local args=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --port)
+        port_filter="${2:-}"
+        if [[ -z "$port_filter" ]]; then
+          error "Missing port number. Usage: sys ps --port <port>"
+          exit 1
+        fi
+        shift 2
+        ;;
+      kill)
+        subcmd="kill"
+        shift
+        args=("$@")
+        break
+        ;;
+      help|-h|--help)
+        _ps_show_help
+        return
+        ;;
+      *)
+        filter="$1"
+        shift
+        ;;
+    esac
+  done
+
+  case "$subcmd" in
+    kill) sys_ps_kill "${args[@]:-}" ;;
+    *)    sys_ps_list "$filter" "$port_filter" ;;
+  esac
 }
 
 main() {
@@ -142,6 +394,7 @@ main() {
     install)        sys_install "$@" ;;
     uninstall)      sys_uninstall "$@" ;;
     deps)           sys_deps ;;
+    ps)             sys_ps "$@" ;;
     help|--help|-h) show_help ;;
     *)              error "Unknown command: $cmd"; show_help; exit 1 ;;
   esac
