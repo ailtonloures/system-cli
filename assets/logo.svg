@@ -15,15 +15,18 @@
   <circle cx="78" cy="36" r="7" fill="#27c93f"/>
   <line x1="18" y1="56" x2="222" y2="56" stroke="#2c2e3f" stroke-width="2"/>
 
-  <!-- prompt chevron ">" as a solid polygon (chevron shape, not just an outline) -->
-  <polygon points="30,84 30,108 62,118 30,128 30,152 96,118" fill="#27c93f"/>
-  <!-- cursor underscore "_" -->
-  <rect x="106" y="140" width="46" height="14" rx="4" fill="#27c93f"/>
+  <!-- simple gear, centered in the terminal body (8 teeth, precomputed coords, no transform) -->
+  <polygon points="111.00,90.00 129.00,90.00 129.00,114.00 111.00,114.00" fill="#27c93f"/>
+  <polygon points="154.65,100.62 167.38,113.35 150.41,130.32 137.68,117.59" fill="#27c93f"/>
+  <polygon points="178.00,139.00 178.00,157.00 154.00,157.00 154.00,139.00" fill="#27c93f"/>
+  <polygon points="167.38,182.65 154.65,195.38 137.68,178.41 150.41,165.68" fill="#27c93f"/>
+  <polygon points="129.00,206.00 111.00,206.00 111.00,182.00 129.00,182.00" fill="#27c93f"/>
+  <polygon points="85.35,195.38 72.62,182.65 89.59,165.68 102.32,178.41" fill="#27c93f"/>
+  <polygon points="62.00,157.00 62.00,139.00 86.00,139.00 86.00,157.00" fill="#27c93f"/>
+  <polygon points="72.62,113.35 85.35,100.62 102.32,117.59 89.59,130.32" fill="#27c93f"/>
 
-  <!-- multi-OS chips: Debian (red), Fedora (blue), macOS (silver) -->
-  <g stroke="#0f1018" stroke-width="3">
-    <circle cx="150" cy="178" r="15" fill="#A81D33"/>
-    <circle cx="184" cy="178" r="15" fill="#3C6EB4"/>
-    <circle cx="167" cy="206" r="15" fill="#D6D6DA"/>
-  </g>
+  <!-- gear body -->
+  <circle cx="120" cy="148" r="34" fill="#27c93f"/>
+  <!-- center hole -->
+  <circle cx="120" cy="148" r="14" fill="#0f1018"/>
 </svg>
