@@ -17,6 +17,8 @@ A collection of shell utilities for everyday system administration on **Debian/U
 | `cron`  | Cron job manager (add, remove, update, list) |
 | `http`  | HTTP client with curl (requests, clients, saved requests) |
 | `dk`    | Docker manager — launches lazydocker TUI |
+| `dkc`   | Docker Compose shorthand — wraps `docker compose` with convenient aliases |
+| `stress`| HTTP stress testing with wrk (auto-installed) |
 
 ## Supported operating systems
 
@@ -34,7 +36,8 @@ A collection of shell utilities for everyday system administration on **Debian/U
 - A supported package manager: `apt`, `dnf`, or `brew`
 - `wg-quick` / WireGuard (for `vpn`)
 - `ssh` / OpenSSH (for `conn`) — preinstalled on macOS and most distros; `sys deps` installs it otherwise
-- Docker (for `dk`) — lazydocker is installed automatically via `sys deps` or on first run of `dk`
+- Docker (for `dk`, `dkc`) — lazydocker is installed automatically via `sys deps` or on first run of `dk`
+- `wrk` (for `stress`) — installed automatically on first run
 
 ### macOS notes
 
@@ -157,6 +160,30 @@ http client list                                  # list all clients
 http save list-users get /users -c myapi          # save a request
 http run list-users                               # replay a saved request
 http history                                      # show recent requests
+```
+
+### dkc
+
+Shorthand for `docker compose`. Any unrecognized command is forwarded directly.
+
+```bash
+dkc up -d               # start services in detached mode
+dkc down                # stop and remove services
+dkc logs api            # follow logs for a service
+dkc exec web bash       # exec into a running service
+dkc ps                  # list running services
+dkc build               # build or rebuild services
+dkc config              # forwarded to docker compose as-is
+```
+
+### stress
+
+HTTP stress testing powered by [wrk](https://github.com/wg/wrk). Installs `wrk` automatically if not present.
+
+```bash
+stress quick https://api.example.com/health          # quick test (4 threads, 100 connections, 10s)
+stress run https://api.example.com/users \
+  -t 8 -c 200 -d 30s                                 # custom threads, connections, duration
 ```
 
 ## License
