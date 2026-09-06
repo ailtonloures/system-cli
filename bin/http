@@ -17,6 +17,11 @@ info()   { echo -e "${GREEN}✓${RESET} $*"; }
 error()  { echo -e "${RED}✗${RESET} $*" >&2; }
 header() { echo -e "${BOLD}${CYAN}$*${RESET}"; }
 
+# Portable lowercase/uppercase helpers — avoid Bash 4+ only ${var,,}/${var^^}
+# expansions so this script also works on macOS's stock Bash 3.2.
+to_lower() { tr '[:upper:]' '[:lower:]' <<< "$1"; }
+to_upper() { tr '[:lower:]' '[:upper:]' <<< "$1"; }
+
 show_help() {
   cat <<EOF
 Usage: http <command> [args]
@@ -119,7 +124,7 @@ http_request() {
   shift 2 || true
 
   if [[ -z "$url_or_path" ]]; then
-    error "Missing URL. Usage: http ${method,,} <url> [opts]"
+    error "Missing URL. Usage: http $(to_lower "$method") <url> [opts]"
     exit 1
   fi
 
@@ -145,7 +150,7 @@ http_request() {
 
     for h in "${_client_headers[@]+"${_client_headers[@]}"}"; do
       curl_args+=(-H "$h")
-      [[ "${h,,}" == content-type:* ]] && has_content_type=1
+      [[ "$(to_lower "$h")" == content-type:* ]] && has_content_type=1
     done
   else
     if [[ ! "$url_or_path" =~ ^https?:// ]]; then
@@ -156,7 +161,7 @@ http_request() {
 
   for h in "${_opt_headers[@]+"${_opt_headers[@]}"}"; do
     curl_args+=(-H "$h")
-    [[ "${h,,}" == content-type:* ]] && has_content_type=1
+    [[ "$(to_lower "$h")" == content-type:* ]] && has_content_type=1
   done
 
   if [[ -n "$_opt_data" ]]; then
@@ -354,7 +359,7 @@ http_save() {
   shift 3
   http_parse_opts "$@"
 
-  method="${method^^}"
+  method="$(to_upper "$method")"
 
   local conf="${HTTP_SAVES_DIR}/${name}.conf"
 
