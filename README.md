@@ -6,6 +6,18 @@
 
 A collection of shell utilities for everyday system administration on **Debian/Ubuntu, Fedora, and macOS**.
 
+## Why system-cli?
+
+Every one of these tools already exists on its own — `apt`, `wg-quick`, `crontab`, `curl`, `docker compose`, `wrk`. What doesn't exist by default is **one consistent interface** across them, and one that follows you between machines.
+
+- **One command set, any OS.** `sys` auto-detects `apt`/`dnf`/`brew` at runtime — the same muscle memory works on your Ubuntu server, your Fedora box, and your Mac, no per-OS cheat sheet.
+- **Less context switching.** Stop juggling raw `wg-quick`, `crontab -e`, and ad-hoc `curl` flags. `vpn`, `cron`, and `http` wrap them with sane defaults, an interactive picker, and saved presets — the parts you'd otherwise re-Google every few months.
+- **Built for the terminal-first workflow.** No GUI, no daemon, no config file to maintain beyond what each tool already needs — `dk` even drops you straight into `lazydocker`'s TUI instead of reinventing one.
+- **Small and inspectable.** Pure Bash, `make install` just symlinks scripts into `~/.local/bin`. Nothing to compile, no hidden dependencies beyond the package manager you already have — read any script in under a minute.
+- **Grows with real usage.** Every tool here (`sys ps` port filters, `stress` via `wrk`, `dkc` shorthand) was added because a real sysadmin/dev task needed it, not speculative feature creep.
+
+If you're the kind of person who SSHes into three different distros a week and is tired of remembering which flavor of package manager you're on, this is for you.
+
 ## Tools
 
 | Command | Description |
@@ -28,11 +40,11 @@ A collection of shell utilities for everyday system administration on **Debian/U
 | Fedora / RHEL-family | `dnf` | `sudo dnf install make` if `make` isn't already present |
 | macOS | `brew` ([Homebrew](https://brew.sh)) | Requires Xcode Command Line Tools (`xcode-select --install`); package commands run without `sudo` |
 
-`sys` detects your OS/package manager automatically at runtime — no configuration needed.
+`sys` detects your OS/package manager automatically at runtime → no configuration needed.
 
 ## Requirements
 
-- Bash 4+ (macOS ships Bash 3.2 by default — see the [macOS section](#macos-notes) below)
+- Bash 4+ (macOS ships Bash 3.2 by default → see the [macOS section](#macos-notes) below)
 - A supported package manager: `apt`, `dnf`, or `brew`
 - `wg-quick` / WireGuard (for `vpn`)
 - `ssh` / OpenSSH (for `conn`) — preinstalled on macOS and most distros; `sys deps` installs it otherwise
@@ -132,9 +144,9 @@ conn keygen deploy       # generate an SSH key pair (interactive type selection)
 ```bash
 cron add backup '0 2 * * *' '/home/user/scripts/backup.sh'  # add with inline args
 cron add cleanup                                              # add interactively
-cron list                                                     # list all managed cron jobs
-cron update backup                                            # update schedule or command
-cron remove backup                                            # remove a cron job
+cron list                                                      # list all managed cron jobs
+cron update backup                                             # update schedule or command
+cron remove backup                                              # remove a cron job
 ```
 
 > On macOS, remember to grant Full Disk Access to your terminal app — see [macOS notes](#macos-notes).
@@ -153,13 +165,13 @@ Requires Docker to be running. If `lazydocker` is not installed, `dk` will insta
 ```bash
 http get https://api.example.com/users           # simple GET request
 http post https://api.example.com/users \
-  -d '{"name":"John"}'                            # POST with JSON body
-http get /users -c myapi                          # use a named client
-http client add myapi                             # add a client (interactive)
+  -d '{"name":"John"}'                               # POST with JSON body
+http get /users -c myapi                            # use a named client
+http client add myapi                            # add a client (interactive)
 http client list                                  # list all clients
 http save list-users get /users -c myapi          # save a request
 http run list-users                               # replay a saved request
-http history                                      # show recent requests
+http history                                   # show recent requests
 ```
 
 ### dkc
@@ -183,7 +195,7 @@ HTTP stress testing powered by [wrk](https://github.com/wg/wrk). Installs `wrk` 
 ```bash
 stress quick https://api.example.com/health          # quick test (4 threads, 100 connections, 10s)
 stress run https://api.example.com/users \
-  -t 8 -c 200 -d 30s                                 # custom threads, connections, duration
+  -t 8 -c 200 -d 30s                                # custom threads, connections, duration
 ```
 
 ## License
