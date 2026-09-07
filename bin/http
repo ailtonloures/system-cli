@@ -22,6 +22,21 @@ header() { echo -e "${BOLD}${CYAN}$*${RESET}"; }
 to_lower() { tr '[:upper:]' '[:lower:]' <<< "$1"; }
 to_upper() { tr '[:lower:]' '[:upper:]' <<< "$1"; }
 
+# Mask a sensitive value for display, keeping a short prefix as a hint
+# (e.g. "Bearer abc123secret" -> "Bearer abc1********").
+mask_secret() {
+  local value="$1"
+  local visible=4
+  local len=${#value}
+
+  if (( len <= visible )); then
+    printf '%s' '********'
+    return
+  fi
+
+  printf '%s%s' "${value:0:visible}" "********"
+}
+
 show_help() {
   cat <<EOF
 Usage: http <command> [args]
@@ -61,7 +76,12 @@ EOF
 
 http_ensure_dirs() {
   mkdir -p "$HTTP_CLIENTS_DIR" "$HTTP_SAVES_DIR"
-  [[ -f "$HTTP_HISTORY" ]] || touch "$HTTP_HISTORY"
+  chmod 700 "$HTTP_CLIENTS_DIR"
+
+  if [[ ! -f "$HTTP_HISTORY" ]]; then
+    touch "$HTTP_HISTORY"
+  fi
+  chmod 600 "$HTTP_HISTORY"
 }
 
 http_check_deps() {
@@ -99,6 +119,7 @@ http_log_history() {
   local timestamp
   timestamp=$(date +%Y-%m-%dT%H:%M:%S)
   echo "${timestamp}|${method}|${url}|${status}" >> "$HTTP_HISTORY"
+  chmod 600 "$HTTP_HISTORY"
 }
 
 http_parse_opts() {
@@ -265,6 +286,11 @@ http_client_add() {
     headers+=("$h")
   done
 
+  # Create the file with restrictive permissions before writing to it, so
+  # the secret is never briefly world/group readable on disk.
+  ( umask 177; : > "$conf" )
+  chmod 600 "$conf"
+
   {
     echo "base_url=${base_url}"
     [[ -n "$auth_token" ]] && echo "auth_token=${auth_token}"
@@ -272,6 +298,7 @@ http_client_add() {
       echo "header=${h}"
     done
   } > "$conf"
+  chmod 600 "$conf"
 
   info "Client '$name' added."
 }
@@ -338,8 +365,19 @@ http_client_show() {
     [[ -z "$line" || "$line" == \#* ]] && continue
     case "$line" in
       base_url=*)   echo -e "  Base URL:  ${line#base_url=}" ;;
-      auth_token=*) echo -e "  Auth:      ${line#auth_token=}" ;;
-      header=*)     echo -e "  Header:    ${line#header=}" ;;
+      auth_token=*) echo -e "  Auth:      $(mask_secret "${line#auth_token=}")" ;;
+      header=*)
+        local h="${line#header=}"
+        local hname="${h%%:*}"
+        # Mask common sensitive header names (Authorization, X-Api-Key, etc.)
+        # so `client show` doesn't leak secrets to a terminal/screen share.
+        if [[ "$(to_lower "$hname")" =~ ^(authorization|x-api-key|api-key|x-auth-token|cookie)$ ]]; then
+          local hval="${h#*: }"
+          echo -e "  Header:    ${hname}: $(mask_secret "$hval")"
+        else
+          echo -e "  Header:    ${h}"
+        fi
+        ;;
     esac
   done < "$conf"
 }
@@ -478,6 +516,7 @@ http_history() {
       return
     fi
     : > "$HTTP_HISTORY"
+    chmod 600 "$HTTP_HISTORY"
     info "History cleared."
     return
   fi
