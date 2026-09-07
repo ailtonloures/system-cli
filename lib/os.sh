@@ -15,6 +15,10 @@
 #
 # Supported operating systems: Debian/Ubuntu (apt), Fedora/RHEL-family (dnf),
 # macOS (brew).
+#
+# Testing: detect_os() reads the os-release file from $OS_RELEASE_FILE when
+# set, defaulting to /etc/os-release. Tests can point this at a fixture file
+# instead of mocking the real filesystem.
 
 # --- Detection ---------------------------------------------------------------
 
@@ -25,9 +29,10 @@ detect_os() {
     return
   fi
 
-  if [[ -f /etc/os-release ]]; then
-    # shellcheck disable=SC1091
-    source /etc/os-release
+  local os_release_file="${OS_RELEASE_FILE:-/etc/os-release}"
+  if [[ -f "$os_release_file" ]]; then
+    # shellcheck disable=SC1090
+    source "$os_release_file"
     case "${ID:-}" in
       ubuntu|debian|linuxmint|pop) echo "debian"; return ;;
       fedora|rhel|centos|rocky|almalinux) echo "fedora"; return ;;
