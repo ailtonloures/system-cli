@@ -24,6 +24,10 @@ Commands:
   list                              List all managed cron jobs
   help                              Show this help
 
+Schedules must be a standard 5-field cron expression (minute hour day-of-month
+month day-of-week). Each field accepts '*', a number in range, a comma-separated
+list, a range ('a-b'), and a step ('*/n' or 'a-b/n').
+
 Examples:
   cron add backup '0 2 * * *' '/home/user/scripts/backup.sh'
   cron add cleanup
@@ -40,6 +44,79 @@ cron_get_crontab() {
 cron_entry_exists() {
   local name="$1"
   cron_get_crontab | grep -qF "${LABEL_PREFIX}${name}"
+}
+
+# _cron_validate_field <value> <min> <max>
+# Validates a single cron field against '*', 'N', 'N-M', 'N,M,...', and
+# optional '/step' suffixes on '*' or a range. Prints nothing; returns
+# 0 (valid) or 1 (invalid) via exit status.
+_cron_validate_field() {
+  local field="$1" min="$2" max="$3"
+
+  # Comma-separated list: validate each item independently.
+  if [[ "$field" == *,* ]]; then
+    local item
+    IFS=',' read -ra _cron_list_items <<< "$field"
+    for item in "${_cron_list_items[@]}"; do
+      [[ -z "$item" ]] && return 1
+      _cron_validate_field "$item" "$min" "$max" || return 1
+    done
+    return 0
+  fi
+
+  local base="$field" step=""
+  if [[ "$field" == */* ]]; then
+    base="${field%%/*}"
+    step="${field#*/}"
+    # Step must be a positive integer.
+    [[ "$step" =~ ^[0-9]+$ ]] || return 1
+    (( step >= 1 )) || return 1
+  fi
+
+  if [[ "$base" == "*" ]]; then
+    return 0
+  fi
+
+  if [[ "$base" == *-* ]]; then
+    local lo="${base%%-*}" hi="${base#*-}"
+    [[ "$lo" =~ ^[0-9]+$ && "$hi" =~ ^[0-9]+$ ]] || return 1
+    (( lo >= min && lo <= max && hi >= min && hi <= max && lo <= hi )) || return 1
+    return 0
+  fi
+
+  [[ "$base" =~ ^[0-9]+$ ]] || return 1
+  (( base >= min && base <= max )) || return 1
+  return 0
+}
+
+# cron_validate_expr <schedule>: validates a 5-field cron expression
+# (minute hour day-of-month month day-of-week). Prints a specific error
+# via `error` and returns 1 on the first invalid/missing field.
+cron_validate_expr() {
+  local schedule="$1"
+  local -a fields
+  # Use read (not `fields=($schedule)`) so that '*' fields are split as
+  # plain words instead of glob-expanding against files in the CWD.
+  read -ra fields <<< "$schedule"
+
+  if [[ ${#fields[@]} -ne 5 ]]; then
+    error "Invalid cron schedule: expected 5 fields (minute hour day month weekday), got ${#fields[@]}: '${schedule}'"
+    return 1
+  fi
+
+  local -a names=(minute hour day-of-month month day-of-week)
+  local -a mins=(0 0 1 1 0)
+  local -a maxs=(59 23 31 12 7)
+
+  local i
+  for i in 0 1 2 3 4; do
+    if ! _cron_validate_field "${fields[$i]}" "${mins[$i]}" "${maxs[$i]}"; then
+      error "Invalid cron schedule: field '${fields[$i]}' (${names[$i]}) is out of range ${mins[$i]}-${maxs[$i]} or malformed: '${schedule}'"
+      return 1
+    fi
+  done
+
+  return 0
 }
 
 cron_add() {
@@ -59,11 +136,16 @@ cron_add() {
 
   if [[ -z "$schedule" ]]; then
     header "Adding cron job: $name"
-    read -rp "  Schedule (e.g. '*/5 * * * *'): " schedule
-    if [[ -z "$schedule" ]]; then
-      error "Schedule cannot be empty."
-      exit 1
-    fi
+    while true; do
+      read -rp "  Schedule (e.g. '*/5 * * * *'): " schedule
+      if [[ -z "$schedule" ]]; then
+        error "Schedule cannot be empty."
+        exit 1
+      fi
+      cron_validate_expr "$schedule" && break
+    done
+  else
+    cron_validate_expr "$schedule" || exit 1
   fi
 
   if [[ -z "$command" ]]; then
@@ -165,8 +247,11 @@ cron_update() {
   echo ""
 
   local new_schedule new_command
-  read -rp "  New schedule (enter to keep): " new_schedule
-  new_schedule="${new_schedule:-$current_schedule}"
+  while true; do
+    read -rp "  New schedule (enter to keep): " new_schedule
+    new_schedule="${new_schedule:-$current_schedule}"
+    cron_validate_expr "$new_schedule" && break
+  done
 
   read -rp "  New command (enter to keep): " new_command
   new_command="${new_command:-$current_command}"
@@ -199,4 +284,7 @@ main() {
   esac
 }
 
-main "$@"
+# Only run main when executed directly, not when sourced (e.g. by bats tests).
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
