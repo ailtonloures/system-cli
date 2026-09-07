@@ -20,6 +20,7 @@ while [[ -h "$_src" ]]; do
   [[ "$_src" != /* ]] && _src="$_dir/$_src"
 done
 readonly SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+readonly REPO_DIR="$(cd -P "${SCRIPT_DIR}/.." && pwd)"
 
 # shellcheck source=../lib/os.sh
 source "${SCRIPT_DIR}/../lib/os.sh"
@@ -36,6 +37,7 @@ Commands:
   ps [term]           List processes (optional name filter)
   ps --port <port>    List processes listening on a specific port
   ps kill <pid>       Kill a process by PID
+  version             Show system-cli version and commit
   help                Show this help
 
 Supported OS: Debian/Ubuntu (apt), Fedora (dnf), macOS (brew)
@@ -48,7 +50,30 @@ Examples:
   sys install curl
   sys uninstall firefox
   sys deps
+  sys --version
 EOF
+}
+
+# sys_version: prints "system-cli <VERSION> (<short-sha>)" — the commit SHA
+# is included only when the repo is a git checkout with git available;
+# otherwise it falls back to the version alone.
+sys_version() {
+  local version_file="${REPO_DIR}/VERSION"
+  local version="unknown"
+  if [[ -f "$version_file" ]]; then
+    version="$(tr -d '[:space:]' < "$version_file")"
+  fi
+
+  local sha=""
+  if command -v git &>/dev/null && git -C "$REPO_DIR" rev-parse --git-dir &>/dev/null; then
+    sha="$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || true)"
+  fi
+
+  if [[ -n "$sha" ]]; then
+    echo "system-cli ${version} (${sha})"
+  else
+    echo "system-cli ${version}"
+  fi
 }
 
 sys_update() {
@@ -263,7 +288,7 @@ sys_ps_list() {
   header "System Processes"
   echo ""
   printf "  ${BOLD}%-8s %-8s %-8s %-20s %-40s %s${RESET}\n" "PID" "CPU%" "MEM%" "COMMAND" "PATH" "PORT"
-  printf "  %-8s %-8s %-8s %-20s %-40s %s\n" "────────" "────────" "────────" "────────────────────" "────────────────────────────────────────" "────────"
+  printf "  %-8s %-8s %-8s %-20s %-40s %s\n" "────────" "────────" "────────" "──────────────────────" "──────────────────────────────────────────" "────────"
 
   local count=0
   while IFS= read -r line; do
@@ -390,14 +415,18 @@ main() {
   shift || true
 
   case "$cmd" in
-    update)         sys_update ;;
-    install)        sys_install "$@" ;;
-    uninstall)      sys_uninstall "$@" ;;
-    deps)           sys_deps ;;
-    ps)             sys_ps "$@" ;;
-    help|--help|-h) show_help ;;
-    *)              error "Unknown command: $cmd"; show_help; exit 1 ;;
+    update)                 sys_update ;;
+    install)                sys_install "$@" ;;
+    uninstall)              sys_uninstall "$@" ;;
+    deps)                   sys_deps ;;
+    ps)                     sys_ps "$@" ;;
+    version|--version|-V)   sys_version ;;
+    help|--help|-h)         show_help ;;
+    *)                      error "Unknown command: $cmd"; show_help; exit 1 ;;
   esac
 }
 
-main "$@"
+# Only run main when executed directly, not when sourced (e.g. by bats tests).
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
