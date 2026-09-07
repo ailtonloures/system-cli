@@ -35,6 +35,7 @@ Commands:
   deps                Check and install all script dependencies
   ps [term]           List processes (optional name filter)
   ps --port <port>    List processes listening on a specific port
+  ps --no-sudo        Skip sudo escalation for port detection (partial results)
   ps kill <pid>       Kill a process by PID
   help                Show this help
 
@@ -153,16 +154,26 @@ Commands:
 
 Options:
   --port <port>       Filter processes by listening port
+  --no-sudo           Skip sudo escalation for port detection; may return a
+                       partial list (only ports owned by the current user)
 
 Examples:
   sys ps              # List all processes
   sys ps nginx        # Filter by name "nginx"
   sys ps --port 3000  # Filter by port 3000
+  sys ps --no-sudo    # List without escalating to sudo (partial port info)
   sys ps kill 1234    # Kill process 1234
 EOF
 }
 
+# _ps_port_map <no_sudo:0|1>
+# Populates the global _PORT_MAP (pid -> comma-separated ports).
+# Unless no_sudo=1, warns explicitly before escalating to sudo, since
+# resolving PIDs for every listening socket (ss/lsof) typically requires
+# root. In non-interactive contexts (e.g. scripts, cron), a bare sudo call
+# can hang indefinitely waiting for a password prompt the user never sees.
 _ps_port_map() {
+  local no_sudo="${1:-0}"
   declare -gA _PORT_MAP=()
   local os
   os="$(detect_os)"
@@ -171,7 +182,12 @@ _ps_port_map() {
     debian|fedora)
       if ! command -v ss &>/dev/null; then return; fi
       local ss_output
-      ss_output="$(sudo ss -tlnp 2>/dev/null || ss -tlnp 2>/dev/null)" || return
+      if [[ "$no_sudo" -eq 1 ]]; then
+        ss_output="$(ss -tlnp 2>/dev/null)" || return
+      else
+        info "Some ports need root to resolve their owning PID; escalating to sudo (use --no-sudo to skip and see a partial list)."
+        ss_output="$(sudo ss -tlnp 2>/dev/null || ss -tlnp 2>/dev/null)" || return
+      fi
       while IFS= read -r line; do
         local port pid
         port="$(echo "$line" | awk '{print $4}' | rev | cut -d: -f1 | rev)"
@@ -187,7 +203,12 @@ _ps_port_map() {
     macos)
       if ! command -v lsof &>/dev/null; then return; fi
       local lsof_output
-      lsof_output="$(sudo lsof -iTCP -sTCP:LISTEN -nP 2>/dev/null || lsof -iTCP -sTCP:LISTEN -nP 2>/dev/null)" || return
+      if [[ "$no_sudo" -eq 1 ]]; then
+        lsof_output="$(lsof -iTCP -sTCP:LISTEN -nP 2>/dev/null)" || return
+      else
+        info "Some ports need root to resolve their owning PID; escalating to sudo (use --no-sudo to skip and see a partial list)."
+        lsof_output="$(sudo lsof -iTCP -sTCP:LISTEN -nP 2>/dev/null || lsof -iTCP -sTCP:LISTEN -nP 2>/dev/null)" || return
+      fi
       while IFS= read -r line; do
         [[ "$line" == COMMAND* ]] && continue
         local pid port
@@ -230,10 +251,11 @@ _ps_exe_path() {
 sys_ps_list() {
   local filter="${1:-}"
   local port_filter="${2:-}"
+  local no_sudo="${3:-0}"
 
   require_bash 4
 
-  _ps_port_map
+  _ps_port_map "$no_sudo"
 
   local os
   os="$(detect_os)"
@@ -263,7 +285,7 @@ sys_ps_list() {
   header "System Processes"
   echo ""
   printf "  ${BOLD}%-8s %-8s %-8s %-20s %-40s %s${RESET}\n" "PID" "CPU%" "MEM%" "COMMAND" "PATH" "PORT"
-  printf "  %-8s %-8s %-8s %-20s %-40s %s\n" "────────" "────────" "────────" "────────────────────" "────────────────────────────────────────" "────────"
+  printf "  %-8s %-8s %-8s %-20s %-40s %s\n" "────────" "────────" "────────" "────────────────────" "───────────────────────────────────────" "────────"
 
   local count=0
   while IFS= read -r line; do
@@ -350,6 +372,7 @@ sys_ps() {
   local subcmd=""
   local port_filter=""
   local filter=""
+  local no_sudo=0
   local args=()
 
   while [[ $# -gt 0 ]]; do
@@ -361,6 +384,10 @@ sys_ps() {
           exit 1
         fi
         shift 2
+        ;;
+      --no-sudo)
+        no_sudo=1
+        shift
         ;;
       kill)
         subcmd="kill"
@@ -381,7 +408,7 @@ sys_ps() {
 
   case "$subcmd" in
     kill) sys_ps_kill "${args[@]:-}" ;;
-    *)    sys_ps_list "$filter" "$port_filter" ;;
+    *)    sys_ps_list "$filter" "$port_filter" "$no_sudo" ;;
   esac
 }
 

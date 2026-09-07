@@ -104,12 +104,13 @@ sys ps                  # list all processes sorted by CPU usage
 sys ps node             # filter processes by name
 sys ps --port 3000      # filter processes by listening port
 sys ps node --port 8080 # combine name and port filters
+sys ps --no-sudo        # skip sudo escalation for port detection (partial results)
 sys ps kill 1234        # kill a process by PID (with confirmation)
 ```
 
 The `kill` subcommand sends `SIGTERM` first. If the process survives after 2 seconds, it offers to escalate to `SIGKILL`.
 
-> **Note:** port detection uses `ss` (Linux) or `lsof` (macOS) and may require `sudo` for full visibility of ports owned by other users. Requires Bash 4+.
+> **Note:** port detection uses `ss` (Linux) or `lsof` (macOS) and may require `sudo` for full visibility of ports owned by other users. `sys ps` prints an explicit warning before escalating to `sudo`, so you're never surprised by a password prompt. Pass `--no-sudo` to skip the escalation entirely and get a partial list instead (only ports owned by your user) — useful in non-interactive/scripted contexts where a hanging `sudo` prompt would block. Requires Bash 4+.
 
 ### vpn
 
