@@ -263,7 +263,7 @@ sys_ps_list() {
   header "System Processes"
   echo ""
   printf "  ${BOLD}%-8s %-8s %-8s %-20s %-40s %s${RESET}\n" "PID" "CPU%" "MEM%" "COMMAND" "PATH" "PORT"
-  printf "  %-8s %-8s %-8s %-20s %-40s %s\n" "────────" "────────" "────────" "────────────────────" "────────────────────────────────────────" "────────"
+  printf "  %-8s %-8s %-8s %-20s %-40s %s\n" "────────" "────────" "────────" "──────────────────────" "──────────────────────────────────────────" "────────"
 
   local count=0
   while IFS= read -r line; do
@@ -400,4 +400,7 @@ main() {
   esac
 }
 
-main "$@"
+# Only run main when executed directly, not when sourced (e.g. by bats tests).
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
