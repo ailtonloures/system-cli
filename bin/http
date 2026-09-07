@@ -48,11 +48,18 @@ Options:
   -H <header>     Add a header (repeatable)
   -d <data>       Request body (string or @file)
   -v              Verbose (show request details + response headers)
+  -j, --json      Force JSON pretty-print of the response body via jq
+
+The response body is automatically pretty-printed with jq when the response
+Content-Type is application/json and jq is installed. Use -j to force an
+attempt regardless of Content-Type. If jq isn't installed, or the body isn't
+valid JSON, the raw body is printed unchanged (silent fallback).
 
 Examples:
   http get https://api.example.com/users
   http post https://api.example.com/users -d '{"name":"John"}'
   http get /users -c myapi
+  http get /users -c myapi -j
   http client add myapi
   http save list-users get /users -c myapi
   http run list-users
@@ -105,6 +112,7 @@ http_parse_opts() {
   _opt_client=""
   _opt_verbose=0
   _opt_data=""
+  _opt_json=0
   _opt_headers=()
 
   while [[ $# -gt 0 ]]; do
@@ -113,9 +121,33 @@ http_parse_opts() {
       -H) _opt_headers+=("${2:-}"); shift 2 ;;
       -d) _opt_data="${2:-}"; shift 2 ;;
       -v) _opt_verbose=1; shift ;;
+      -j|--json) _opt_json=1; shift ;;
       *)  error "Unknown option: $1"; exit 1 ;;
     esac
   done
+}
+
+# http_print_body <body> <content_type>
+# Pretty-prints <body> via `jq .` when it looks like JSON (either explicitly
+# requested with -j, or the response Content-Type says application/json) and
+# jq is installed. Falls back silently to the raw body otherwise — jq
+# missing, body empty, or body not valid JSON never causes an error.
+http_print_body() {
+  local body="$1" content_type="$2"
+  local want_json=0
+
+  [[ "$_opt_json" -eq 1 ]] && want_json=1
+  [[ "$(to_lower "$content_type")" == *application/json* ]] && want_json=1
+
+  if [[ "$want_json" -eq 1 && -n "$body" ]] && command -v jq &>/dev/null; then
+    local pretty
+    if pretty=$(printf '%s' "$body" | jq . 2>/dev/null); then
+      echo "$pretty"
+      return
+    fi
+  fi
+
+  echo "$body"
 }
 
 http_request() {
@@ -184,6 +216,18 @@ http_request() {
     echo -e "${BOLD}${method} ${resolved_url}${RESET}" >&2
   fi
 
+  # Capture response headers separately so we can inspect Content-Type for
+  # JSON pretty-printing without disturbing the body/status-code parsing.
+  # NOTE: deliberately NOT using `trap ... RETURN` here — a RETURN trap set
+  # inside this function leaks into every function called afterwards (it
+  # fires on *their* return too, not just this function's), which blew up
+  # with "headers_tmp: unbound variable" once we were out of scope. Instead
+  # we just rm it explicitly right after we're done reading it, and once
+  # more defensively at the end of the function.
+  local headers_tmp
+  headers_tmp="$(mktemp)"
+  curl_args+=(-D "$headers_tmp")
+
   curl_args+=("$resolved_url")
 
   local output exit_code=0
@@ -200,7 +244,16 @@ http_request() {
   body=$(echo "$output" | sed '$d')
 
   if [[ -n "$body" ]]; then
-    echo "$body"
+    local content_type=""
+    if [[ -f "$headers_tmp" ]]; then
+      # On redirects curl appends one header block per hop; the last
+      # Content-Type line reflects the final response.
+      content_type="$(grep -i '^content-type:' "$headers_tmp" | tail -1 | cut -d: -f2- | tr -d '\r' | sed 's/^ *//')"
+    fi
+    rm -f "$headers_tmp"
+    http_print_body "$body" "$content_type"
+  else
+    rm -f "$headers_tmp"
   fi
 
   if [[ "$status_code" =~ ^[0-9]+$ ]]; then
@@ -520,4 +573,7 @@ main() {
   esac
 }
 
-main "$@"
+# Only run main when executed directly, not when sourced (e.g. by bats tests).
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
