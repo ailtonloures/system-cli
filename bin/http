@@ -520,4 +520,7 @@ main() {
   esac
 }
 
-main "$@"
+# Only run main when executed directly, not when sourced (e.g. by bats tests).
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
