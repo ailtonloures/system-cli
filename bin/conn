@@ -8,6 +8,7 @@ readonly BOLD='\033[1m'
 readonly RESET='\033[0m'
 
 readonly SSH_CONFIG="${HOME}/.ssh/config"
+readonly ALIAS_REGEX='^[A-Za-z0-9_.-]+$'
 
 info()   { echo -e "${GREEN}✓${RESET} $*"; }
 error()  { echo -e "${RED}✗${RESET} $*" >&2; }
@@ -47,6 +48,32 @@ conn_host_exists() {
   grep -qiE "^Host[[:space:]]+${alias}$" "$SSH_CONFIG" 2>/dev/null
 }
 
+conn_validate_alias() {
+  local alias="$1"
+  if [[ -z "$alias" ]]; then
+    error "Missing alias. Usage: conn ${2:-add} <alias>"
+    exit 1
+  fi
+  if [[ ! "$alias" =~ $ALIAS_REGEX ]]; then
+    error "Invalid alias '$alias'. Only letters, numbers, '.', '_' and '-' are allowed (no spaces or special characters)."
+    exit 1
+  fi
+}
+
+conn_validate_field() {
+  local value="$1"
+  local field_name="$2"
+
+  if [[ -z "$value" ]]; then
+    error "${field_name} cannot be empty."
+    exit 1
+  fi
+  if [[ "$value" =~ [[:space:]] ]]; then
+    error "${field_name} cannot contain spaces: '${value}'"
+    exit 1
+  fi
+}
+
 conn_connect() {
   local alias="$1"
   conn_ensure_config
@@ -62,10 +89,7 @@ conn_connect() {
 
 conn_add() {
   local alias="${1:-}"
-  if [[ -z "$alias" ]]; then
-    error "Missing alias. Usage: conn add <alias>"
-    exit 1
-  fi
+  conn_validate_alias "$alias" "add"
 
   conn_ensure_config
 
@@ -79,16 +103,10 @@ conn_add() {
   local hostname user port identity_file
 
   read -rp "  Hostname/IP: " hostname
-  if [[ -z "$hostname" ]]; then
-    error "Hostname cannot be empty."
-    exit 1
-  fi
+  conn_validate_field "$hostname" "Hostname"
 
   read -rp "  User: " user
-  if [[ -z "$user" ]]; then
-    error "User cannot be empty."
-    exit 1
-  fi
+  conn_validate_field "$user" "User"
 
   read -rp "  Port [22]: " port
   port="${port:-22}"
@@ -111,10 +129,7 @@ conn_add() {
 
 conn_remove() {
   local alias="${1:-}"
-  if [[ -z "$alias" ]]; then
-    error "Missing alias. Usage: conn remove <alias>"
-    exit 1
-  fi
+  conn_validate_alias "$alias" "remove"
 
   conn_ensure_config
 
