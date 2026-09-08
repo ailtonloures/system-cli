@@ -2,6 +2,15 @@
   <img src="assets/logo-lockup-light.svg" alt="system-cli logo" width="160">
 </p>
 
+<p align="center">
+  <img src="https://img.shields.io/github/v/tag/ailtonloures/system-cli?label=version&sort=semver" alt="Version">
+  <img src="https://img.shields.io/github/license/ailtonloures/system-cli" alt="License">
+  <img src="https://img.shields.io/github/actions/workflow/status/ailtonloures/system-cli/test.yml?label=tests" alt="Tests">
+  <img src="https://img.shields.io/github/actions/workflow/status/ailtonloures/system-cli/lint.yml?label=lint" alt="Lint">
+  <img src="https://img.shields.io/badge/shell-bash-blue" alt="Shell">
+  <img src="https://img.shields.io/badge/platform-linux%20%7C%20macos-lightgrey" alt="Platform">
+</p>
+
 # system-cli
 
 A collection of shell utilities for everyday system administration on **Debian/Ubuntu, Fedora, and macOS**.
