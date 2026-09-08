@@ -7,7 +7,8 @@ while [[ -h "$_src" ]]; do
   _src="$(readlink "$_src")"
   [[ "$_src" != /* ]] && _src="$_dir/$_src"
 done
-readonly SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+readonly SCRIPT_DIR
 
 # shellcheck source=../lib/ui.sh
 source "${SCRIPT_DIR}/../lib/ui.sh"
@@ -261,8 +262,8 @@ conn_list() {
       local alias="${BASH_REMATCH[1]}"
       [[ "$alias" == "*" ]] && continue
       local hostname user
-      hostname=$(ssh -G "$alias" 2>/dev/null | awk '/^hostname / {print $2}')
-      user=$(ssh -G "$alias" 2>/dev/null | awk '/^user / {print $2}')
+      hostname=$(ssh -n -G "$alias" 2>/dev/null | awk '/^hostname / {print $2}')
+      user=$(ssh -n -G "$alias" 2>/dev/null | awk '/^user / {print $2}')
       echo -e "  ${GREEN}${alias}${RESET} → ${user}@${hostname}"
       found=1
     fi
