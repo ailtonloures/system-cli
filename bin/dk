@@ -1,16 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly GREEN='\033[0;32m'
-readonly RED='\033[0;31m'
-readonly CYAN='\033[0;36m'
-readonly BOLD='\033[1m'
-readonly RESET='\033[0m'
-
-info()  { echo -e "${GREEN}✓${RESET} $*"; }
-error() { echo -e "${RED}✗${RESET} $*" >&2; }
-header() { echo -e "${BOLD}${CYAN}$*${RESET}"; }
-
 _src="${BASH_SOURCE[0]}"
 while [[ -h "$_src" ]]; do
   _dir="$(cd -P "$(dirname "$_src")" && pwd)"
@@ -19,6 +9,8 @@ while [[ -h "$_src" ]]; do
 done
 readonly SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
 
+# shellcheck source=../lib/ui.sh
+source "${SCRIPT_DIR}/../lib/ui.sh"
 # shellcheck source=../lib/os.sh
 source "${SCRIPT_DIR}/../lib/os.sh"
 
@@ -42,6 +34,7 @@ main() {
   local cmd="${1:-}"
 
   case "$cmd" in
+    --version|-V)   show_version; return ;;
     help|--help|-h) show_help; return ;;
   esac
 

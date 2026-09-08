@@ -1,18 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly GREEN='\033[0;32m'
-readonly RED='\033[0;31m'
-readonly CYAN='\033[0;36m'
-readonly BOLD='\033[1m'
-readonly RESET='\033[0m'
-
-info()  { echo -e "${GREEN}✓${RESET} $*"; }
-error() { echo -e "${RED}✗${RESET} $*" >&2; }
-header() { echo -e "${BOLD}${CYAN}$*${RESET}"; }
-
-# Resolve the script's real directory (following symlinks, since this is
-# typically invoked via a `~/.local/bin/sys` symlink) to locate lib/os.sh.
 _src="${BASH_SOURCE[0]}"
 while [[ -h "$_src" ]]; do
   _dir="$(cd -P "$(dirname "$_src")" && pwd)"
@@ -21,6 +9,8 @@ while [[ -h "$_src" ]]; do
 done
 readonly SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
 
+# shellcheck source=../lib/ui.sh
+source "${SCRIPT_DIR}/../lib/ui.sh"
 # shellcheck source=../lib/os.sh
 source "${SCRIPT_DIR}/../lib/os.sh"
 
@@ -36,6 +26,7 @@ Commands:
   ps [term]           List processes (optional name filter)
   ps --port <port>    List processes listening on a specific port
   ps kill <pid>       Kill a process by PID
+  self-update         Update system-cli to the latest version
   help                Show this help
 
 Supported OS: Debian/Ubuntu (apt), Fedora (dnf), macOS (brew)
@@ -170,8 +161,14 @@ _ps_port_map() {
   case "$os" in
     debian|fedora)
       if ! command -v ss &>/dev/null; then return; fi
-      local ss_output
-      ss_output="$(sudo ss -tlnp 2>/dev/null || ss -tlnp 2>/dev/null)" || return
+      local ss_output _used_sudo=1
+      ss_output="$(sudo ss -tlnp 2>/dev/null)" || {
+        _used_sudo=0
+        ss_output="$(ss -tlnp 2>/dev/null)" || return
+      }
+      if [[ "$_used_sudo" -eq 0 ]]; then
+        echo -e "${YELLOW}!${RESET} Running without root — some ports may be hidden" >&2
+      fi
       while IFS= read -r line; do
         local port pid
         port="$(echo "$line" | awk '{print $4}' | rev | cut -d: -f1 | rev)"
@@ -186,8 +183,14 @@ _ps_port_map() {
       ;;
     macos)
       if ! command -v lsof &>/dev/null; then return; fi
-      local lsof_output
-      lsof_output="$(sudo lsof -iTCP -sTCP:LISTEN -nP 2>/dev/null || lsof -iTCP -sTCP:LISTEN -nP 2>/dev/null)" || return
+      local lsof_output _used_sudo=1
+      lsof_output="$(sudo lsof -iTCP -sTCP:LISTEN -nP 2>/dev/null)" || {
+        _used_sudo=0
+        lsof_output="$(lsof -iTCP -sTCP:LISTEN -nP 2>/dev/null)" || return
+      }
+      if [[ "$_used_sudo" -eq 0 ]]; then
+        echo -e "${YELLOW}!${RESET} Running without root — some ports may be hidden" >&2
+      fi
       while IFS= read -r line; do
         [[ "$line" == COMMAND* ]] && continue
         local pid port
@@ -385,6 +388,25 @@ sys_ps() {
   esac
 }
 
+sys_self_update() {
+  local repo_dir="${SCRIPT_DIR}/.."
+  if [[ ! -d "${repo_dir}/.git" ]]; then
+    error "system-cli does not appear to be a git clone. Cannot self-update."
+    exit 1
+  fi
+  header "Updating system-cli..."
+  if ! git -C "$repo_dir" pull --ff-only; then
+    error "Update failed. You may have local changes — try 'git -C ${repo_dir} status'."
+    exit 1
+  fi
+  local version_file="${repo_dir}/VERSION"
+  if [[ -f "$version_file" ]]; then
+    info "Updated to $(cat "$version_file")"
+  else
+    info "Updated."
+  fi
+}
+
 main() {
   local cmd="${1:-help}"
   shift || true
@@ -395,6 +417,8 @@ main() {
     uninstall)      sys_uninstall "$@" ;;
     deps)           sys_deps ;;
     ps)             sys_ps "$@" ;;
+    self-update)    sys_self_update ;;
+    --version|-V)   show_version ;;
     help|--help|-h) show_help ;;
     *)              error "Unknown command: $cmd"; show_help; exit 1 ;;
   esac

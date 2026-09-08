@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly RESET='\033[0m'
+_src="${BASH_SOURCE[0]}"
+while [[ -h "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+readonly SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
 
-info()  { echo -e "${GREEN}✓${RESET} $*"; }
-error() { echo -e "${RED}✗${RESET} $*" >&2; }
+# shellcheck source=../lib/ui.sh
+source "${SCRIPT_DIR}/../lib/ui.sh"
 
 show_help() {
   cat <<EOF
@@ -108,6 +112,7 @@ main() {
     up)             vpn_up "$@" ;;
     down)           vpn_down "$@" ;;
     show|status)    vpn_show ;;
+    --version|-V)   show_version ;;
     help|--help|-h) show_help ;;
     *)              error "Unknown command: $cmd"; show_help; exit 1 ;;
   esac

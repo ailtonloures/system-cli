@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly GREEN='\033[0;32m'
-readonly RED='\033[0;31m'
-readonly CYAN='\033[0;36m'
-readonly BOLD='\033[1m'
-readonly RESET='\033[0m'
+_src="${BASH_SOURCE[0]}"
+while [[ -h "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+readonly SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+
+# shellcheck source=../lib/ui.sh
+source "${SCRIPT_DIR}/../lib/ui.sh"
 
 readonly SSH_CONFIG="${HOME}/.ssh/config"
-
-info()   { echo -e "${GREEN}✓${RESET} $*"; }
-error()  { echo -e "${RED}✗${RESET} $*" >&2; }
-header() { echo -e "${BOLD}${CYAN}$*${RESET}"; }
 
 show_help() {
   cat <<EOF
@@ -20,6 +21,7 @@ Usage: conn <command> [args]
 Commands:
   <alias>            Connect to a saved SSH host
   add <alias>        Add a new SSH connection (interactive)
+  edit <alias>       Edit an existing connection
   remove <alias>     Remove a saved connection
   list               List all configured connections
   keygen [name]      Generate an SSH key pair (ed25519, rsa, ecdsa)
@@ -28,6 +30,7 @@ Commands:
 Examples:
   conn hermes
   conn add hermes
+  conn edit hermes
   conn remove hermes
   conn list
   conn keygen deploy
@@ -36,6 +39,7 @@ EOF
 
 conn_ensure_config() {
   mkdir -p "${HOME}/.ssh"
+  chmod 700 "${HOME}/.ssh"
   if [[ ! -f "$SSH_CONFIG" ]]; then
     touch "$SSH_CONFIG"
     chmod 600 "$SSH_CONFIG"
@@ -67,6 +71,11 @@ conn_add() {
     exit 1
   fi
 
+  if [[ ! "$alias" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+    error "Invalid alias '$alias'. Use only letters, digits, dots, hyphens, and underscores."
+    exit 1
+  fi
+
   conn_ensure_config
 
   if conn_host_exists "$alias"; then
@@ -93,7 +102,13 @@ conn_add() {
   read -rp "  Port [22]: " port
   port="${port:-22}"
 
+  if [[ ! "$port" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); then
+    error "Invalid port '$port'. Must be a number between 1 and 65535."
+    exit 1
+  fi
+
   read -rp "  IdentityFile (leave empty to skip): " identity_file
+  read -rp "  ProxyJump (leave empty to skip): " proxy_jump
 
   {
     echo ""
@@ -104,9 +119,91 @@ conn_add() {
     if [[ -n "$identity_file" ]]; then
       echo "  IdentityFile $identity_file"
     fi
+    if [[ -n "$proxy_jump" ]]; then
+      echo "  ProxyJump $proxy_jump"
+    fi
   } >> "$SSH_CONFIG"
 
   info "Connection '$alias' added."
+}
+
+conn_edit() {
+  local alias="${1:-}"
+  if [[ -z "$alias" ]]; then
+    error "Missing alias. Usage: conn edit <alias>"
+    exit 1
+  fi
+
+  conn_ensure_config
+
+  if ! conn_host_exists "$alias"; then
+    error "Host '$alias' not found in ${SSH_CONFIG}"
+    exit 1
+  fi
+
+  local cur_hostname cur_user cur_port cur_identity cur_proxy
+  cur_hostname=$(ssh -G "$alias" 2>/dev/null | awk '/^hostname / {print $2}')
+  cur_user=$(ssh -G "$alias" 2>/dev/null | awk '/^user / {print $2}')
+  cur_port=$(ssh -G "$alias" 2>/dev/null | awk '/^port / {print $2}')
+  cur_identity=$(ssh -G "$alias" 2>/dev/null | awk '/^identityfile / {print $2; exit}')
+  cur_proxy=$(ssh -G "$alias" 2>/dev/null | awk '/^proxyjump / {print $2}')
+
+  header "Editing connection: $alias"
+  echo ""
+
+  local hostname user port identity_file proxy_jump
+  read -rp "  Hostname/IP [${cur_hostname}]: " hostname
+  hostname="${hostname:-$cur_hostname}"
+
+  read -rp "  User [${cur_user}]: " user
+  user="${user:-$cur_user}"
+
+  read -rp "  Port [${cur_port}]: " port
+  port="${port:-$cur_port}"
+
+  if [[ ! "$port" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); then
+    error "Invalid port '$port'. Must be a number between 1 and 65535."
+    exit 1
+  fi
+
+  read -rp "  IdentityFile [${cur_identity:-(none)}]: " identity_file
+  identity_file="${identity_file:-$cur_identity}"
+
+  read -rp "  ProxyJump [${cur_proxy:-(none)}]: " proxy_jump
+  proxy_jump="${proxy_jump:-$cur_proxy}"
+
+  local tmp
+  tmp=$(mktemp)
+
+  awk -v host="$alias" '
+    BEGIN { skip=0 }
+    /^Host[[:space:]]/ {
+      if ($2 == host) { skip=1; next }
+      else { skip=0 }
+    }
+    skip && /^[[:space:]]/ { next }
+    skip && /^$/ { skip=0; next }
+    !skip { print }
+  ' "$SSH_CONFIG" > "$tmp"
+
+  {
+    echo ""
+    echo "Host $alias"
+    echo "  HostName $hostname"
+    echo "  User $user"
+    echo "  Port $port"
+    if [[ -n "$identity_file" ]]; then
+      echo "  IdentityFile $identity_file"
+    fi
+    if [[ -n "$proxy_jump" ]]; then
+      echo "  ProxyJump $proxy_jump"
+    fi
+  } >> "$tmp"
+
+  mv "$tmp" "$SSH_CONFIG"
+  chmod 600 "$SSH_CONFIG"
+
+  info "Connection '$alias' updated."
 }
 
 conn_remove() {
@@ -223,9 +320,11 @@ main() {
 
   case "$cmd" in
     add)            conn_add "$@" ;;
+    edit)           conn_edit "$@" ;;
     remove)         conn_remove "$@" ;;
     list|ls)        conn_list ;;
     keygen)         conn_keygen "$@" ;;
+    --version|-V)   show_version ;;
     help|--help|-h) show_help ;;
     *)              conn_connect "$cmd" ;;
   esac

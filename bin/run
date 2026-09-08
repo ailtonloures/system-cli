@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+_src="${BASH_SOURCE[0]}"
+while [[ -h "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+readonly SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+
+# shellcheck source=../lib/ui.sh
+source "${SCRIPT_DIR}/../lib/ui.sh"
+
 readonly SCRIPTS_DIR="${SCRIPTS_DIR:-$HOME/Scripts}"
-
-readonly CYAN='\033[0;36m'
-readonly RED='\033[0;31m'
-readonly BOLD='\033[1m'
-readonly RESET='\033[0m'
-
-error() { echo -e "${RED}✗${RESET} $*" >&2; }
-header() { echo -e "${BOLD}${CYAN}$*${RESET}"; }
 
 show_help() {
   cat <<EOF
@@ -76,6 +79,7 @@ main() {
   local cmd="${1:-}"
 
   case "$cmd" in
+    --version|-V)   show_version ;;
     help|--help|-h) show_help ;;
     "")             run_picker ;;
     *)              run_script "$cmd" ;;

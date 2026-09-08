@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly GREEN='\033[0;32m'
-readonly RED='\033[0;31m'
-readonly CYAN='\033[0;36m'
-readonly BOLD='\033[1m'
-readonly RESET='\033[0m'
+_src="${BASH_SOURCE[0]}"
+while [[ -h "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+readonly SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
 
-info()  { echo -e "${GREEN}✓${RESET} $*"; }
-error() { echo -e "${RED}✗${RESET} $*" >&2; }
-header() { echo -e "${BOLD}${CYAN}$*${RESET}"; }
+# shellcheck source=../lib/ui.sh
+source "${SCRIPT_DIR}/../lib/ui.sh"
 
 show_help() {
   cat <<EOF
@@ -66,6 +67,7 @@ main() {
     run)               exec docker compose run "$@" ;;
     stop)              exec docker compose stop "$@" ;;
     start)             exec docker compose start "$@" ;;
+    --version|-V)      show_version ;;
     help|--help|-h)    show_help ;;
     *)                 exec docker compose "$cmd" "$@" ;;
   esac

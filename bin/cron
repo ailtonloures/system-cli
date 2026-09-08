@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly GREEN='\033[0;32m'
-readonly RED='\033[0;31m'
-readonly CYAN='\033[0;36m'
-readonly BOLD='\033[1m'
-readonly RESET='\033[0m'
+_src="${BASH_SOURCE[0]}"
+while [[ -h "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+readonly SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+
+# shellcheck source=../lib/ui.sh
+source "${SCRIPT_DIR}/../lib/ui.sh"
 
 readonly LABEL_PREFIX="# cron:"
-
-info()   { echo -e "${GREEN}✓${RESET} $*"; }
-error()  { echo -e "${RED}✗${RESET} $*" >&2; }
-header() { echo -e "${BOLD}${CYAN}$*${RESET}"; }
 
 show_help() {
   cat <<EOF
@@ -31,6 +32,46 @@ Examples:
   cron update backup
   cron remove backup
 EOF
+}
+
+cron_validate_schedule() {
+  local schedule="$1"
+  local -a fields
+  read -ra fields <<< "$schedule"
+
+  if [[ ${#fields[@]} -ne 5 ]]; then
+    error "Invalid cron schedule: expected 5 fields, got ${#fields[@]}"
+    return 1
+  fi
+
+  local -a max_vals=(59 23 31 12 7)
+  local -a field_names=("minute" "hour" "day of month" "month" "day of week")
+
+  for i in "${!fields[@]}"; do
+    local field="${fields[$i]}"
+    if [[ "$field" == "*" || "$field" =~ ^\*/[0-9]+$ ]]; then
+      continue
+    fi
+    IFS=',' read -ra parts <<< "$field"
+    for part in "${parts[@]}"; do
+      local low high
+      if [[ "$part" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+        low="${BASH_REMATCH[1]}"
+        high="${BASH_REMATCH[2]}"
+      elif [[ "$part" =~ ^[0-9]+$ ]]; then
+        low="$part"
+        high="$part"
+      else
+        error "Invalid cron field '${field_names[$i]}': $part"
+        return 1
+      fi
+      if (( low > max_vals[i] || high > max_vals[i] )); then
+        error "Value out of range for ${field_names[$i]}: $part (max ${max_vals[$i]})"
+        return 1
+      fi
+    done
+  done
+  return 0
 }
 
 cron_get_crontab() {
@@ -72,6 +113,10 @@ cron_add() {
       error "Command cannot be empty."
       exit 1
     fi
+  fi
+
+  if ! cron_validate_schedule "$schedule"; then
+    exit 1
   fi
 
   (cron_get_crontab; echo "${LABEL_PREFIX}${name}"; echo "${schedule} ${command}") | crontab -
@@ -176,6 +221,10 @@ cron_update() {
     return
   fi
 
+  if ! cron_validate_schedule "$new_schedule"; then
+    exit 1
+  fi
+
   cron_get_crontab | awk -v label="${LABEL_PREFIX}${name}" -v new_entry="${new_schedule} ${new_command}" '
     $0 == label { print; skip=1; next }
     skip { print new_entry; skip=0; next }
@@ -194,6 +243,7 @@ main() {
     remove)         cron_remove "$@" ;;
     update)         cron_update "$@" ;;
     list|ls)        cron_list ;;
+    --version|-V)   show_version ;;
     help|--help|-h) show_help ;;
     *)              error "Unknown command: $cmd"; show_help; exit 1 ;;
   esac
