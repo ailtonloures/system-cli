@@ -91,6 +91,7 @@ sys install ./app.rpm   # install a local package file (Fedora → .rpm)
 sys install ./app.pkg   # install a local package file (macOS → .pkg)
 sys uninstall firefox   # remove a package
 sys deps                # check and install missing dependencies for all tools
+sys self-update         # update system-cli to the latest version
 ```
 
 Local package file installation is OS-specific: a `.deb` only works on Debian/Ubuntu, `.rpm` only on Fedora, and `.pkg` only on macOS. Attempting to install the wrong format for your OS produces a clear error.
@@ -134,6 +135,7 @@ Set `SCRIPTS_DIR` to change the default scripts directory.
 ```bash
 conn hermes             # connect to a saved SSH host
 conn add hermes          # add a new connection (interactive)
+conn edit hermes         # edit an existing connection
 conn remove hermes       # remove a connection
 conn list                # list all configured connections
 conn keygen deploy       # generate an SSH key pair (interactive type selection)
@@ -168,9 +170,13 @@ http post https://api.example.com/users \
   -d '{"name":"John"}'                               # POST with JSON body
 http get /users -c myapi                            # use a named client
 http client add myapi                            # add a client (interactive)
+http client show myapi                           # show client details
+http client remove myapi                         # remove a client
 http client list                                  # list all clients
 http save list-users get /users -c myapi          # save a request
 http run list-users                               # replay a saved request
+http saves                                        # list saved requests
+http unsave list-users                            # remove a saved request
 http history                                   # show recent requests
 ```
 
@@ -181,10 +187,15 @@ Shorthand for `docker compose`. Any unrecognized command is forwarded directly.
 ```bash
 dkc up -d               # start services in detached mode
 dkc down                # stop and remove services
+dkc start               # start stopped services
+dkc stop                # stop services without removing them
+dkc restart             # restart services
 dkc logs api            # follow logs for a service
 dkc exec web bash       # exec into a running service
+dkc run web bash        # run a one-off command in a service
 dkc ps                  # list running services
 dkc build               # build or rebuild services
+dkc pull                # pull service images
 dkc config              # forwarded to docker compose as-is
 ```
 
