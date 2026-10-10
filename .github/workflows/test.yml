@@ -2,14 +2,28 @@ name: Test
 
 on: [push, pull_request]
 
+permissions:
+  contents: read
+
+env:
+  BATS_TAG: v1.14.0
+  BATS_COMMIT: eb7f42f8d608ac693d7a4b67474f6714ea68cfc5
+
 jobs:
   bats:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Install bats
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install bats (pinned release)
         run: |
-          git clone --depth 1 https://github.com/bats-core/bats-core.git /tmp/bats
+          git clone --depth 1 --branch "$BATS_TAG" https://github.com/bats-core/bats-core.git /tmp/bats
+          actual="$(git -C /tmp/bats rev-parse HEAD^{commit})"
+          if [ "$actual" != "$BATS_COMMIT" ]; then
+            echo "bats-core $BATS_TAG resolved to $actual, expected $BATS_COMMIT" >&2
+            exit 1
+          fi
           sudo /tmp/bats/install.sh /usr/local
       - name: Run tests
         run: bats test/

@@ -21,13 +21,17 @@ Usage: stress <command> [args]
 
 Commands:
   run <url> [options]    Run a stress test with custom parameters
-  quick <url>            Run a quick stress test with sensible defaults
+  quick <url> [--yes]    Run a quick stress test with sensible defaults
   help                   Show this help
 
 Options (for 'run'):
   -t <threads>           Number of threads (default: 4)
   -c <connections>       Number of connections (default: 100)
-  -d <duration>          Test duration (default: 10s)
+  -d <duration>          Test duration: number + s|m|h (default: 10s)
+  -y, --yes              Skip the confirmation for non-local targets
+
+Targets outside loopback/private networks/.local require confirmation
+(or --yes). Only test systems you are authorized to test.
 
 Examples:
   stress quick https://api.example.com/health
@@ -45,31 +49,102 @@ stress_check_deps() {
   fi
 }
 
+stress_extract_host() {
+  local rest="${1#*://}"
+  rest="${rest%%[/?#]*}"
+  rest="${rest##*@}"
+  if [[ "$rest" == \[* ]]; then
+    rest="${rest#\[}"
+    rest="${rest%%\]*}"
+  else
+    rest="${rest%%:*}"
+  fi
+  printf '%s' "$rest" | tr '[:upper:]' '[:lower:]'
+}
+
+stress_is_local_host() {
+  local host="$1"
+  case "$host" in
+    localhost|*.localhost|*.local|::1) return 0 ;;
+    127.*|10.*|192.168.*) return 0 ;;
+    172.1[6-9].*|172.2[0-9].*|172.3[0-1].*) return 0 ;;
+  esac
+  return 1
+}
+
+stress_confirm_target() {
+  local url="$1" assume_yes="$2"
+  local host
+  host="$(stress_extract_host "$url")"
+  if [[ -z "$host" ]]; then
+    error "Could not determine host from URL: ${url}"
+    exit 1
+  fi
+  stress_is_local_host "$host" && return 0
+
+  warn "'${host}' is not a loopback/private/.local host."
+  warn "Only run stress tests against systems you own or have explicit written authorization to test."
+  if [[ "$assume_yes" == true ]]; then
+    return 0
+  fi
+  local reply=""
+  if [[ -t 0 ]]; then
+    read -r -p "Continue? [y/N] " reply || reply=""
+  else
+    read -r reply || reply=""
+  fi
+  case "$reply" in
+    y|Y|yes|YES) return 0 ;;
+    *) info "Cancelled."; exit 1 ;;
+  esac
+}
+
 stress_run() {
-  local url="${1:-}"
+  local url=""
+  local threads=4
+  local connections=100
+  local duration="10s"
+  local assume_yes=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -t) threads="${2:-}"; shift; [[ $# -gt 0 ]] && shift ;;
+      -c) connections="${2:-}"; shift; [[ $# -gt 0 ]] && shift ;;
+      -d) duration="${2:-}"; shift; [[ $# -gt 0 ]] && shift ;;
+      -y|--yes) assume_yes=true; shift ;;
+      -*) error "Unknown option: $1"; exit 1 ;;
+      *)
+        if [[ -n "$url" ]]; then
+          error "Unexpected argument: $1"; exit 1
+        fi
+        url="$1"; shift ;;
+    esac
+  done
+
   if [[ -z "$url" ]]; then
     error "Missing URL. Usage: stress run <url> [options]"
     exit 1
   fi
-  shift
-
-  local threads=4
-  local connections=100
-  local duration="10s"
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      -t) threads="${2:-}"; shift 2 ;;
-      -c) connections="${2:-}"; shift 2 ;;
-      -d) duration="${2:-}"; shift 2 ;;
-      *)  error "Unknown option: $1"; exit 1 ;;
-    esac
-  done
 
   if [[ ! "$url" =~ ^https?:// ]]; then
     error "URL must start with http:// or https://"
     exit 1
   fi
+  if [[ ! "$threads" =~ ^[1-9][0-9]*$ ]]; then
+    error "Invalid threads (-t): must be a positive integer"
+    exit 1
+  fi
+  if [[ ! "$connections" =~ ^[1-9][0-9]*$ ]]; then
+    error "Invalid connections (-c): must be a positive integer"
+    exit 1
+  fi
+  if [[ ! "$duration" =~ ^[0-9]+[smh]$ ]]; then
+    error "Invalid duration (-d): use a number followed by s, m or h (e.g. 30s)"
+    exit 1
+  fi
+
+  stress_confirm_target "$url" "$assume_yes"
+  stress_check_deps
 
   header "Stress test: ${url}"
   echo -e "  Threads: ${YELLOW}${threads}${RESET}  Connections: ${YELLOW}${connections}${RESET}  Duration: ${YELLOW}${duration}${RESET}"
@@ -79,18 +154,15 @@ stress_run() {
 }
 
 stress_quick() {
-  local url="${1:-}"
-  if [[ -z "$url" ]]; then
-    error "Missing URL. Usage: stress quick <url>"
+  if [[ $# -eq 0 || "${1:-}" == -* && "${1:-}" != -y && "${1:-}" != --yes ]]; then
+    error "Missing URL. Usage: stress quick <url> [--yes]"
     exit 1
   fi
 
-  stress_run "$url"
+  stress_run "$@"
 }
 
 main() {
-  stress_check_deps
-
   local cmd="${1:-help}"
   shift || true
 

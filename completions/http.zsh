@@ -24,7 +24,11 @@ _http() {
     args)
       case $words[1] in
         client)
-          _values 'subcommand' 'add[Add a named client]' 'remove[Remove a client]' 'list[List all clients]' 'show[Show client details]'
+          if [[ $words[2] == show && $CURRENT -ge 4 ]]; then
+            _values 'option' '--reveal[Show the full auth token]'
+          else
+            _values 'subcommand' 'add[Add a named client]' 'remove[Remove a client]' 'list[List all clients]' 'show[Show client details]'
+          fi
           ;;
         run|unsave)
           local -a saves

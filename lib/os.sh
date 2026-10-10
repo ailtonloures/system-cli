@@ -217,8 +217,22 @@ pkg_install() {
   esac
 }
 
+# Pinned wrk release (tag + the commit it must resolve to).
+WRK_REF="4.2.0"
+WRK_COMMIT="a211dd5a7050b1f9e8a9870b95513060e72ac4a0"
+
+# _sha256 <file>: prints the SHA-256 hex digest of a file.
+_sha256() {
+  if command -v sha256sum &>/dev/null; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
 # install_lazydocker: installs lazydocker from Homebrew (macOS) or GitHub
-# Releases binary (Linux) into ~/.local/bin.
+# Releases binary (Linux) into ~/.local/bin. The tarball is verified against
+# the release's checksums.txt before extraction.
 install_lazydocker() {
   local os
   os="$(detect_os)"
@@ -240,21 +254,54 @@ install_lazydocker() {
     *)            error "Unsupported architecture: $(uname -m)"; exit 1 ;;
   esac
 
+  local headers
+  if ! headers="$(curl -fsSI https://github.com/jesseduffield/lazydocker/releases/latest)"; then
+    error "Could not query the latest lazydocker release (HTTP request failed)."
+    exit 1
+  fi
   local latest_url
-  latest_url="$(curl -sI https://github.com/jesseduffield/lazydocker/releases/latest \
-    | grep -i '^location:' | tr -d '\r' | awk '{print $2}')"
+  latest_url="$(printf '%s\n' "$headers" | grep -i '^location:' | tr -d '\r' | awk '{print $2}')"
   local version="${latest_url##*/}"
 
-  local tarball="lazydocker_${version#v}_Linux_${arch}.tar.gz"
-  local download_url="https://github.com/jesseduffield/lazydocker/releases/download/${version}/${tarball}"
+  if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    error "Version check failed: unexpected lazydocker version '${version}' (expected vX.Y.Z)."
+    exit 1
+  fi
 
-  local tmp_dir
+  local tarball="lazydocker_${version#v}_Linux_${arch}.tar.gz"
+  local base_url="https://github.com/jesseduffield/lazydocker/releases/download/${version}"
+
+  # Single EXIT trap (path expanded now, since tmp_dir is local); the previous
+  # trap is restored only after the directory has been removed.
+  local tmp_dir prev_trap
   tmp_dir="$(mktemp -d)"
-  trap 'rm -rf "$tmp_dir"' EXIT
+  prev_trap="$(trap -p EXIT)"
+  # shellcheck disable=SC2064
+  trap "rm -rf '${tmp_dir}'" EXIT
 
   header "Downloading lazydocker ${version} for Linux ${arch}..."
-  curl -sL "$download_url" -o "${tmp_dir}/${tarball}"
-  tar -xzf "${tmp_dir}/${tarball}" -C "$tmp_dir"
+  if ! curl -fsSL "${base_url}/${tarball}" -o "${tmp_dir}/${tarball}"; then
+    error "Download failed: ${base_url}/${tarball}"
+    exit 1
+  fi
+  if ! curl -fsSL "${base_url}/checksums.txt" -o "${tmp_dir}/checksums.txt"; then
+    error "Download failed: ${base_url}/checksums.txt"
+    exit 1
+  fi
+
+  local expected actual
+  expected="$(awk -v f="$tarball" '$2 == f || $2 == "*" f {print $1; exit}' "${tmp_dir}/checksums.txt")"
+  if [[ -z "$expected" ]]; then
+    error "Checksum verification failed: ${tarball} not listed in checksums.txt."
+    exit 1
+  fi
+  actual="$(_sha256 "${tmp_dir}/${tarball}")"
+  if [[ "$actual" != "$expected" ]]; then
+    error "Checksum verification failed for ${tarball} (expected ${expected}, got ${actual})."
+    exit 1
+  fi
+
+  tar -xzf "${tmp_dir}/${tarball}" -C "$tmp_dir" lazydocker
 
   mkdir -p "${HOME}/.local/bin"
   mv "${tmp_dir}/lazydocker" "${HOME}/.local/bin/lazydocker"
@@ -262,8 +309,8 @@ install_lazydocker() {
 
   info "lazydocker ${version} installed to ~/.local/bin/lazydocker"
 
-  trap - EXIT
   rm -rf "$tmp_dir"
+  eval "${prev_trap:-trap - EXIT}"
 }
 
 install_wrk() {
@@ -293,12 +340,25 @@ install_wrk() {
     done
   fi
 
-  local tmp_dir
+  local tmp_dir prev_trap
   tmp_dir="$(mktemp -d)"
-  trap 'rm -rf "$tmp_dir"' EXIT
+  prev_trap="$(trap -p EXIT)"
+  # shellcheck disable=SC2064
+  trap "rm -rf '${tmp_dir}'" EXIT
 
-  header "Building wrk from source..."
-  git clone --depth 1 https://github.com/wg/wrk.git "$tmp_dir/wrk"
+  header "Building wrk ${WRK_REF} from source..."
+  if ! git clone --depth 1 --branch "$WRK_REF" https://github.com/wg/wrk.git "$tmp_dir/wrk"; then
+    error "Could not clone wrk at ${WRK_REF}."
+    exit 1
+  fi
+
+  local head
+  head="$(git -C "$tmp_dir/wrk" rev-parse HEAD)"
+  if [[ "$head" != "$WRK_COMMIT" ]]; then
+    error "Commit check failed: wrk ${WRK_REF} resolved to ${head}, expected ${WRK_COMMIT}."
+    exit 1
+  fi
+
   make -C "$tmp_dir/wrk" -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)"
 
   mkdir -p "${HOME}/.local/bin"
@@ -307,8 +367,8 @@ install_wrk() {
 
   info "wrk installed to ~/.local/bin/wrk"
 
-  trap - EXIT
   rm -rf "$tmp_dir"
+  eval "${prev_trap:-trap - EXIT}"
 }
 
 pkg_remove() {

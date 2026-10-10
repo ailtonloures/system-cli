@@ -139,6 +139,8 @@ run backup              # run ~/Scripts/backup.sh directly
 
 Set `SCRIPTS_DIR` to change the default scripts directory.
 
+Safety: `run` refuses to execute a script (or use a `SCRIPTS_DIR`) that is not owned by you or is writable by group/others; fix with `chmod go-w <path>`. Script names containing `/` or `..` are rejected.
+
 ### conn
 
 ```bash
@@ -179,7 +181,8 @@ http post https://api.example.com/users \
   -d '{"name":"John"}'                               # POST with JSON body
 http get /users -c myapi                            # use a named client
 http client add myapi                            # add a client (interactive)
-http client show myapi                           # show client details
+http client show myapi                          # show client details (token masked)
+http client show myapi --reveal                 # show details including the full token
 http client remove myapi                         # remove a client
 http client list                                  # list all clients
 http save list-users get /users -c myapi          # save a request
@@ -216,7 +219,14 @@ HTTP stress testing powered by [wrk](https://github.com/wg/wrk). Installs `wrk` 
 stress quick https://api.example.com/health          # quick test (4 threads, 100 connections, 10s)
 stress run https://api.example.com/users \
   -t 8 -c 200 -d 30s                                # custom threads, connections, duration
+stress quick https://example.com --yes               # skip the authorization prompt (non-interactive)
 ```
+
+Threads and connections must be positive integers; duration is a number followed by `s`, `m` or `h`. Targets outside loopback, private (RFC1918) and `.local` hosts show an authorization warning and require confirmation (`[y/N]`) unless `--yes` is given. `wrk` is only installed when a test actually runs, not for `help`.
+
+## Security
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md). CI runs with read-only permissions and pins GitHub Actions to commit SHAs.
 
 ## License
 

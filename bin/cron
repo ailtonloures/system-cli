@@ -79,9 +79,34 @@ cron_get_crontab() {
   crontab -l 2>/dev/null || true
 }
 
+cron_validate_name() {
+  local name="$1"
+  if [[ ! "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    error "Invalid name '$name': use only letters, digits, '-' and '_'."
+    return 1
+  fi
+}
+
 cron_entry_exists() {
   local name="$1"
-  cron_get_crontab | grep -qF "${LABEL_PREFIX}${name}"
+  cron_get_crontab | grep -qFx -- "${LABEL_PREFIX}${name}"
+}
+
+# Prints the entry line following the exact label line of job $1.
+cron_get_entry() {
+  local label="${LABEL_PREFIX}$1"
+  cron_get_crontab | LABEL="$label" awk '
+    found { print; exit }
+    $0 == ENVIRON["LABEL"] { found=1 }
+  '
+}
+
+cron_warn_percent() {
+  local command="$1"
+  local stripped="${command//\\%/}"
+  if [[ "$stripped" == *%* ]]; then
+    warn "Command contains an unescaped '%': cron treats it as a newline. Escape it as '\\%'."
+  fi
 }
 
 cron_add() {
@@ -90,6 +115,7 @@ cron_add() {
     error "Missing name. Usage: cron add <name> [schedule] [command]"
     exit 1
   fi
+  cron_validate_name "$name" || exit 1
 
   if cron_entry_exists "$name"; then
     error "Cron job '$name' already exists. Use 'cron update $name' to modify it."
@@ -119,6 +145,8 @@ cron_add() {
   if ! cron_validate_schedule "$schedule"; then
     exit 1
   fi
+
+  cron_warn_percent "$command"
 
   (cron_get_crontab; echo "${LABEL_PREFIX}${name}"; echo "${schedule} ${command}") | crontab -
 
@@ -161,6 +189,7 @@ cron_remove() {
     error "Missing name. Usage: cron remove <name>"
     exit 1
   fi
+  cron_validate_name "$name" || exit 1
 
   if ! cron_entry_exists "$name"; then
     error "Cron job '$name' not found."
@@ -168,7 +197,7 @@ cron_remove() {
   fi
 
   local entry
-  entry=$(cron_get_crontab | grep -A1 -F "${LABEL_PREFIX}${name}" | tail -1)
+  entry=$(cron_get_entry "$name")
   echo -e "  ${BOLD}${name}${RESET}: ${entry}"
 
   read -rp "Remove cron job '$name'? [y/N] " confirm
@@ -177,8 +206,8 @@ cron_remove() {
     return
   fi
 
-  cron_get_crontab | awk -v label="${LABEL_PREFIX}${name}" '
-    $0 == label { skip=1; next }
+  cron_get_crontab | LABEL="${LABEL_PREFIX}${name}" awk '
+    $0 == ENVIRON["LABEL"] { skip=1; next }
     skip { skip=0; next }
     { print }
   ' | crontab -
@@ -192,6 +221,7 @@ cron_update() {
     error "Missing name. Usage: cron update <name>"
     exit 1
   fi
+  cron_validate_name "$name" || exit 1
 
   if ! cron_entry_exists "$name"; then
     error "Cron job '$name' not found."
@@ -199,7 +229,7 @@ cron_update() {
   fi
 
   local current_entry
-  current_entry=$(cron_get_crontab | grep -A1 -F "${LABEL_PREFIX}${name}" | tail -1)
+  current_entry=$(cron_get_entry "$name")
 
   local current_schedule current_command
   current_schedule=$(echo "$current_entry" | awk '{print $1, $2, $3, $4, $5}')
@@ -226,9 +256,11 @@ cron_update() {
     exit 1
   fi
 
-  cron_get_crontab | awk -v label="${LABEL_PREFIX}${name}" -v new_entry="${new_schedule} ${new_command}" '
-    $0 == label { print; skip=1; next }
-    skip { print new_entry; skip=0; next }
+  cron_warn_percent "$new_command"
+
+  cron_get_crontab | LABEL="${LABEL_PREFIX}${name}" NEW_ENTRY="${new_schedule} ${new_command}" awk '
+    $0 == ENVIRON["LABEL"] { print; skip=1; next }
+    skip { print ENVIRON["NEW_ENTRY"]; skip=0; next }
     { print }
   ' | crontab -
 

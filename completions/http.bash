@@ -9,6 +9,9 @@ _http_completions() {
     client)
       COMPREPLY=($(compgen -W "add remove list show" -- "$cur"))
       ;;
+    show)
+      COMPREPLY=($(compgen -W "--reveal" -- "$cur"))
+      ;;
     -c)
       local clients
       clients=$(ls ~/.config/http/clients/*.conf 2>/dev/null | xargs -I{} basename {} .conf)

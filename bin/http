@@ -31,6 +31,17 @@ _validate_name() {
   fi
 }
 
+# Mask a secret, leaving only the last 4 characters visible.
+_mask_secret() {
+  local secret="$1"
+  local len=${#secret}
+  if [[ "$len" -le 4 ]]; then
+    printf '%s' "****"
+  else
+    printf '****%s' "${secret: -4}"
+  fi
+}
+
 show_help() {
   cat <<EOF
 Usage: http <command> [args]
@@ -43,7 +54,7 @@ Commands:
   client add <name>                     Add a named client (interactive)
   client remove <name>                  Remove a client
   client list                           List all clients
-  client show <name>                    Show client details
+  client show <name> [--reveal]         Show client details (token masked)
   save <name> <method> <url> [opts]     Save a request for replay
   run <name>                            Replay a saved request
   saves                                 List saved requests
@@ -109,6 +120,12 @@ http_log_history() {
   local method="$1" url="$2" status="$3"
   local timestamp
   timestamp=$(date +%Y-%m-%dT%H:%M:%S)
+  # Never persist query strings/fragments (may carry tokens) or delimiters
+  url="${url%%\#*}"
+  url="${url%%\?*}"
+  method="$(printf '%s' "$method" | tr -d '|\r\n')"
+  url="$(printf '%s' "$url" | tr -d '|\r\n')"
+  status="$(printf '%s' "$status" | tr -d '|\r\n')"
   echo "${timestamp}|${method}|${url}|${status}" >> "$HTTP_HISTORY"
 }
 
@@ -202,6 +219,11 @@ http_request() {
 
   local output exit_code=0
   output=$(curl "${curl_args[@]}" 2>&1) || exit_code=$?
+
+  # Verbose output echoes request headers; never show the Authorization value
+  if [[ "$_opt_verbose" -eq 1 && -n "$output" ]]; then
+    output=$(printf '%s\n' "$output" | sed -E 's/^([<> ]*[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]:).*/\1 ********/')
+  fi
 
   if [[ "$exit_code" -ne 0 && -z "$output" ]]; then
     error "Request failed (curl exit $exit_code)"
@@ -343,9 +365,15 @@ http_client_list() {
 }
 
 http_client_show() {
-  local name="${1:-}"
+  local name="" reveal=0 arg
+  for arg in "$@"; do
+    case "$arg" in
+      --reveal) reveal=1 ;;
+      *) [[ -z "$name" ]] && name="$arg" ;;
+    esac
+  done
   if [[ -z "$name" ]]; then
-    error "Missing name. Usage: http client show <name>"
+    error "Missing name. Usage: http client show <name> [--reveal]"
     exit 1
   fi
   _validate_name "$name" "client name"
@@ -362,7 +390,13 @@ http_client_show() {
     [[ -z "$line" || "$line" == \#* ]] && continue
     case "$line" in
       base_url=*)   echo -e "  Base URL:  ${line#base_url=}" ;;
-      auth_token=*) echo -e "  Auth:      ${line#auth_token=}" ;;
+      auth_token=*)
+        if [[ "$reveal" -eq 1 ]]; then
+          echo -e "  Auth:      ${line#auth_token=}"
+        else
+          echo -e "  Auth:      $(_mask_secret "${line#auth_token=}")"
+        fi
+        ;;
       header=*)     echo -e "  Header:    ${line#header=}" ;;
     esac
   done < "$conf"
